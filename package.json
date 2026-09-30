@@ -4,7 +4,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+    "test": "tsc --target es2020 --module commonjs --esModuleInterop --skipLibCheck --resolveJsonModule --outDir .anchor/test-build --rootDir . tests/*.ts && mocha --timeout 60000 '.anchor/test-build/tests/*.js'"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

@@ -123,12 +123,7 @@ export async function makeOffer(
       maker: maker.publicKey,
       tokenMintA: mintA,
       tokenMintB: mintB,
-      makerTokenAccountA,
-      offer,
-      vault,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       tokenProgram: TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
     })
     .signers([maker])
     .rpc();
@@ -156,7 +151,7 @@ export function takeOfferIx(
     call: () =>
       program.methods
         .takeOffer()
-        .accounts({
+        .accountsPartial({
           taker: taker.publicKey,
           maker,
           tokenMintA: mintA,
@@ -187,7 +182,7 @@ export function cancelOfferIx(
     call: () =>
       program.methods
         .cancelOffer()
-        .accounts({
+        .accountsPartial({
           maker: maker.publicKey,
           tokenMintA: mintA,
           offer,
