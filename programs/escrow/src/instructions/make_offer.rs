@@ -1,10 +1,28 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
+    token_2022::spl_token_2022::{
+        extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
+        state::Mint as SplMint,
+    },
     token_interface::{transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
-use crate::{constants::*, state::Offer};
+use crate::{constants::*, error::ErrorCode, state::Offer};
+
+/// Rejects a mint that carries a TransferFeeConfig extension. Such a mint
+/// withholds part of every transfer, so the vault would hold less than the
+/// offered amount. Classic SPL mints have no extensions and pass.
+fn reject_transfer_fee_mint(mint: &AccountInfo) -> Result<()> {
+    let data = mint.try_borrow_data()?;
+    if let Ok(state) = StateWithExtensions::<SplMint>::unpack(&data) {
+        require!(
+            state.get_extension::<TransferFeeConfig>().is_err(),
+            ErrorCode::TransferFeeNotSupported
+        );
+    }
+    Ok(())
+}
 
 #[derive(Accounts)]
 #[instruction(offer_id: u64)]
@@ -14,6 +32,7 @@ pub struct MakeOffer<'info> {
 
     pub token_mint_a: InterfaceAccount<'info, Mint>,
 
+    #[account(constraint = token_mint_b.key() != token_mint_a.key() @ ErrorCode::SameMint)]
     pub token_mint_b: InterfaceAccount<'info, Mint>,
 
     #[account(
@@ -53,6 +72,11 @@ pub fn handle_make_offer(
     amount_a: u64,
     amount_b: u64,
 ) -> Result<()> {
+    require!(amount_a > 0, ErrorCode::ZeroAmount);
+    require!(amount_b > 0, ErrorCode::ZeroAmount);
+    reject_transfer_fee_mint(&ctx.accounts.token_mint_a.to_account_info())?;
+    reject_transfer_fee_mint(&ctx.accounts.token_mint_b.to_account_info())?;
+
     ctx.accounts.offer.set_inner(Offer {
         offer_id,
         maker: ctx.accounts.maker.key(),
@@ -71,6 +95,14 @@ pub fn handle_make_offer(
     };
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
     transfer_checked(cpi_ctx, amount_a, ctx.accounts.token_mint_a.decimals)?;
+
+    // The vault was created empty above, so it must now hold exactly amount_a.
+    ctx.accounts.vault.reload()?;
+    require_eq!(
+        ctx.accounts.vault.amount,
+        amount_a,
+        ErrorCode::TransferAmountMismatch
+    );
 
     msg!(
         "Offer {} created: locked {} of mint A for {} of mint B",

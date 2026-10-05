@@ -7,7 +7,7 @@ use anchor_spl::{
     },
 };
 
-use crate::{constants::*, state::Offer};
+use crate::{constants::*, error::ErrorCode, state::Offer};
 
 #[derive(Accounts)]
 pub struct TakeOffer<'info> {
@@ -74,6 +74,8 @@ pub struct TakeOffer<'info> {
 pub fn handle_take_offer(ctx: Context<TakeOffer>) -> Result<()> {
     let amount_a = ctx.accounts.offer.amount_a;
     let amount_b = ctx.accounts.offer.amount_b;
+    // maker_token_account_b may already hold tokens, so compare the delta.
+    let maker_b_before = ctx.accounts.maker_token_account_b.amount;
 
     let cpi_accounts = TransferChecked {
         from: ctx.accounts.taker_token_account_b.to_account_info(),
@@ -83,6 +85,15 @@ pub fn handle_take_offer(ctx: Context<TakeOffer>) -> Result<()> {
     };
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
     transfer_checked(cpi_ctx, amount_b, ctx.accounts.token_mint_b.decimals)?;
+
+    ctx.accounts.maker_token_account_b.reload()?;
+    let received_b = ctx
+        .accounts
+        .maker_token_account_b
+        .amount
+        .checked_sub(maker_b_before)
+        .ok_or(ErrorCode::TransferAmountMismatch)?;
+    require_eq!(received_b, amount_b, ErrorCode::TransferAmountMismatch);
 
     let maker_key = ctx.accounts.maker.key();
     let offer_id_bytes = ctx.accounts.offer.offer_id.to_le_bytes();
