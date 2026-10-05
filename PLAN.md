@@ -1,6 +1,6 @@
 # Frontend rebuild plan
 
-Status: approved. Phase 1 (Frontend Setup) is complete. Phase 2 has not started.
+Status: approved. Phase 1 (Frontend Setup) is complete. Phase 2 (Wallet Connection) is built and tested by hand.
 
 ## Goal
 
@@ -26,6 +26,11 @@ Rebuild the escrow frontend from scratch in a new `frontend/` folder, following 
 
 1. **ESLint stays on version 9 (9.39.5).** ESLint 10 fails with `eslint-config-next` 16.3.8. The React lint plugin bundled with it calls `getFilename`, which ESLint 10 removed, so `npm run lint` crashes. npm marks ESLint 9 as no longer supported, which conflicts with the rule against deprecated packages. Revisit when `eslint-config-next` supports ESLint 10.
 2. **npm audit warnings are accepted for now.** There are 5 high-severity findings, all in dev-only lint tooling: `eslint-config-next`, `@next/eslint-plugin-next`, `braces`, `fast-glob`, and `micromatch`. Production dependencies have 0 findings. npm's suggested fix is to downgrade to `eslint-config-next` 14.2.35, which was not applied. Re-check when `eslint-config-next` is updated.
+3. **Wallet adapter packages are kept, and their audit findings are accepted for now.** The packages are `@solana/wallet-adapter-react`, `@solana/wallet-adapter-react-ui`, `@solana/wallet-adapter-base`, and `@solana/web3.js`. The production audit reports 23 findings: 13 high and 10 moderate. Two causes:
+   - `@solana/web3.js` 1.99.0 depends on `jayson`, which has a moderate advisory. npm offers no fix. This affects any 1.x web3.js app, including the Anchor client planned for Phase 3.
+   - `@solana/wallet-adapter-react` depends on the Solana Mobile packages, which depend on React Native and carry high-severity advisories. npm offers no fix. This app has no mobile wallet support.
+
+   Re-check in Phase 10.
 
 ## Findings in `app/` (reference only, not to be fixed there)
 
@@ -54,8 +59,9 @@ Rebuild the escrow frontend from scratch in a new `frontend/` folder, following 
 - **Goal:** Phantom connect and disconnect through the Wallet Standard. Show the address and live SOL balance. Warn if the RPC's genesis hash is not devnet's.
 - **Files:** `frontend/src/app/providers.tsx`, `components/WalletButton.tsx`, `components/WalletInfo.tsx`, `lib/solana/network.ts`
 - **Dependencies:** Phase 1.
-- **Test:** Manual with Phantom on devnet: connect, disconnect, switch accounts, change network and check the warning.
+- **Test:** Manual with Phantom on devnet: connect, disconnect, switch accounts. Then point the site at a non-devnet RPC address and check that the warning appears.
 - **Must work first:** The UI always reflects the active account.
+- **Note:** The warning was checked with the testnet address (`https://api.testnet.solana.com`). The public mainnet address (`https://api.mainnet-beta.solana.com`) returned HTTP 403 to a browser-style request, so the page shows "Could not check the network. Refresh the page to try again."
 
 ### 3. Anchor Client
 - **Goal:** Load the program from the build's IDL. Read one existing offer account.
@@ -115,6 +121,7 @@ The program validates on-chain, but the frontend must not rely on that alone for
 - **Stale offer data.** Refetch the offer before take and cancel. Treat "account not found" as "already taken or cancelled." Never show an offer as active without a fresh fetch.
 - **Duplicate submission.** Disable the submit button while a transaction is pending. Before retrying after a timeout, check the first signature's status, so an earlier transaction that landed is not sent twice.
 - **Exposed secrets.** Keep keypairs out of the frontend and the repo. Treat any `NEXT_PUBLIC_` value as public, so use a restricted RPC key or a server-side proxy. Confirm env files are ignored and no source map leaks secrets.
+- **Mobile packages and audit.** Check the production build properly for the Solana Mobile / React Native packages, and recheck npm audit.
 - **Files:** Review of all phases' files, plus `frontend/next.config.ts`, `.env.example`, and `frontend/docs/security-review.md`.
 - **Dependencies:** Phases 1–9.
 - **Test:** A written checklist with one line per item, each marked with its evidence (test name or manual step). A search of the production build for the RPC key.
