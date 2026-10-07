@@ -1,21 +1,23 @@
+import { Footer } from "@/components/Footer";
+import { Header } from "@/components/Header";
+import { Hero } from "@/components/Hero";
+import { HowItWorks } from "@/components/HowItWorks";
 import { NetworkWarning } from "@/components/NetworkWarning";
-import { WalletButton } from "@/components/WalletButton";
-import { WalletInfo } from "@/components/WalletInfo";
+import { StatsRow } from "@/components/StatsRow";
+import { StatusStrip } from "@/components/StatusStrip";
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-zinc-50 px-6 text-center font-sans dark:bg-black">
-      <div className="flex flex-col items-center gap-3">
-        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          Escrow Swap
-        </h1>
-        <p className="max-w-md text-base text-zinc-600 dark:text-zinc-400">
-          Swap tokens with other people. Connect your wallet to get started.
-        </p>
-      </div>
-      <NetworkWarning />
-      <WalletButton />
-      <WalletInfo />
-    </main>
+    <div className="flex min-h-screen flex-col bg-canvas text-ink">
+      <Header />
+      <StatusStrip />
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-16 px-4 pb-16 sm:px-6">
+        <Hero />
+        <NetworkWarning />
+        <StatsRow />
+        <HowItWorks />
+      </main>
+      <Footer />
+    </div>
   );
 }

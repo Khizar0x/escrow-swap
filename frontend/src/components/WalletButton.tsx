@@ -1,34 +1,62 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { Button } from "@/components/ui/Button";
+import { CopyButton } from "@/components/ui/CopyButton";
+import { PowerIcon } from "@/components/ui/icons";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { useSolBalance } from "@/hooks/useSolBalance";
+import { shortenAddress } from "@/lib/format/address";
+import { formatSol } from "@/lib/format/sol";
 
-// Shows "Connect Wallet" when no wallet is connected, and
-// "Disconnect Wallet" when one is.
+// Shows a "Connect Wallet" button when no wallet is connected. When one is, it shows
+// the balance, the short address with a copy button, and a round disconnect button.
 export function WalletButton() {
-  const { connected, connecting, disconnect } = useWallet();
+  const { connected, connecting, disconnect, publicKey } = useWallet();
   const { setVisible } = useWalletModal();
+  const balance = useSolBalance();
 
-  if (!connected) {
+  if (!connected || !publicKey) {
     return (
-      <button
-        type="button"
-        onClick={() => setVisible(true)}
-        disabled={connecting}
-        className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-50 dark:text-zinc-900"
-      >
+      <Button onClick={() => setVisible(true)} disabled={connecting}>
         {connecting ? "Connecting…" : "Connect Wallet"}
-      </button>
+      </Button>
     );
   }
 
+  const address = publicKey.toBase58();
+
+  let balanceText: ReactNode;
+  if (balance.error) {
+    balanceText = "—";
+  } else if (balance.lamports === null) {
+    balanceText = <Skeleton className="h-4 w-16" />;
+  } else {
+    balanceText = formatSol(balance.lamports);
+  }
+
   return (
-    <button
-      type="button"
-      onClick={() => void disconnect()}
-      className="rounded-full border border-zinc-300 px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-50 dark:hover:bg-zinc-900"
-    >
-      Disconnect Wallet
-    </button>
+    <div className="flex items-center gap-2">
+      <span className="hidden h-10 items-center rounded-full border border-border bg-raised px-4 font-mono text-sm tabular-nums text-ink sm:inline-flex">
+        {balanceText}
+      </span>
+      <span className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-raised pl-3 pr-1 font-mono text-sm text-ink">
+        <span aria-hidden="true" className="size-2 rounded-full bg-success" />
+        <span>{shortenAddress(address)}</span>
+        <CopyButton value={address} />
+      </span>
+      <Button
+        variant="secondary"
+        size="icon"
+        shape="round"
+        aria-label="Disconnect Wallet"
+        title="Disconnect Wallet"
+        onClick={() => void disconnect()}
+      >
+        <PowerIcon />
+      </Button>
+    </div>
   );
 }
