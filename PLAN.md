@@ -1,6 +1,6 @@
 # Frontend rebuild plan
 
-Status: approved. Phase 1 (Frontend Setup) is complete. Phase 2 (Wallet Connection) is built and tested by hand.
+Status: approved. Phase 1 (Frontend Setup) is complete. Phase 2 (Wallet Connection) is built and tested by hand. Phase 3 (Anchor Client) is complete. Phase 4 (PDA Utilities) is complete, with tests comparing derivations against independently computed reference addresses. Phase 5 (Create Offer) is built at the `/create-offer` route, with validation, error mapping, and transaction-state tests; the full create flow has not yet been tested by hand on devnet.
 
 ## Goal
 
