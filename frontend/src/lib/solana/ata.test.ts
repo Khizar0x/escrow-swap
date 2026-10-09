@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { PublicKey } from "@solana/web3.js";
 import { offerAddress } from "./pda";
-import { associatedTokenAddress } from "./ata";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  associatedTokenAddress,
+  createAssociatedTokenAccountIdempotentInstruction,
+} from "./ata";
 import escrowIdl from "@/idl/escrow.json";
 
 const PROGRAM_ID = new PublicKey(escrowIdl.address);
@@ -27,5 +32,21 @@ describe("associatedTokenAddress", () => {
     const a = associatedTokenAddress(MINT_A, MAKER);
     const b = associatedTokenAddress(other, MAKER);
     expect(a.equals(b)).toBe(false);
+  });
+});
+
+describe("createAssociatedTokenAccountIdempotentInstruction", () => {
+  it("targets the associated token program, with the CreateIdempotent selector and the derived account", () => {
+    const ix = createAssociatedTokenAccountIdempotentInstruction(MAKER, MAKER, MINT_A);
+
+    expect(ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)).toBe(true);
+    expect(ix.data).toEqual(Buffer.from([1]));
+    expect(ix.keys).toHaveLength(6);
+    expect(ix.keys[0]).toMatchObject({ pubkey: MAKER, isSigner: true, isWritable: true });
+    expect(ix.keys[1].pubkey.equals(associatedTokenAddress(MINT_A, MAKER))).toBe(true);
+    expect(ix.keys[1]).toMatchObject({ isSigner: false, isWritable: true });
+    expect(ix.keys[2]).toMatchObject({ pubkey: MAKER, isSigner: false, isWritable: false });
+    expect(ix.keys[3]).toMatchObject({ pubkey: MINT_A, isSigner: false, isWritable: false });
+    expect(ix.keys[5]).toMatchObject({ pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false });
   });
 });

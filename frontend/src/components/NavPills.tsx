@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// The main navigation. Marketplace and Create Offer have pages today. My Offers
-// is shown as unavailable until its step is built, so no link leads to an empty page.
+// The main navigation: Marketplace, Create Offer, and My Offers.
 export function NavPills() {
   const pathname = usePathname();
 
@@ -36,12 +35,15 @@ export function NavPills() {
           </Link>
         </li>
         <li>
-          <span
-            aria-disabled="true"
-            className="inline-flex cursor-not-allowed whitespace-nowrap rounded-full px-4 py-1.5 text-sm text-muted"
+          <Link
+            href="/my-offers"
+            aria-current={pathname === "/my-offers" ? "page" : undefined}
+            className={`inline-flex whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium ${
+              pathname === "/my-offers" ? "bg-accent-strong text-on-accent" : "text-ink hover:bg-raised"
+            }`}
           >
             My Offers
-          </span>
+          </Link>
         </li>
       </ul>
     </nav>

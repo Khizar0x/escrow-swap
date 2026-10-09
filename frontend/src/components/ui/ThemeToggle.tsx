@@ -42,7 +42,7 @@ export function ThemeToggle() {
       type="button"
       onClick={handleClick}
       aria-label={`Switch to ${next} theme`}
-      className="inline-flex size-10 flex-none items-center justify-center rounded-full border border-control bg-surface text-ink transition-colors duration-200 ease-out hover:bg-raised"
+      className="inline-flex size-10 flex-none cursor-pointer items-center justify-center rounded-full border border-control bg-surface text-ink transition-colors duration-200 ease-out hover:bg-raised"
     >
       {theme === "dark" ? <SunIcon /> : <MoonIcon />}
     </button>

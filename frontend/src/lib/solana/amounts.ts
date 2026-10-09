@@ -34,3 +34,19 @@ export function toBaseUnits(amount: string, decimals: number): bigint {
   }
   return baseUnits;
 }
+
+// The inverse of toBaseUnits: turns base units back into a decimal string
+// for display, e.g. 1_500_000n at 6 decimals -> "1.5". Uses only BigInt and
+// string slicing, never a floating-point Number, and trims trailing zeros
+// so whole numbers don't show a bare decimal point.
+export function fromBaseUnits(amount: bigint, decimals: number): string {
+  if (decimals === 0) {
+    return amount.toString();
+  }
+
+  const digits = amount.toString().padStart(decimals + 1, "0");
+  const wholePart = digits.slice(0, digits.length - decimals);
+  const fractionPart = digits.slice(digits.length - decimals).replace(/0+$/, "");
+
+  return fractionPart.length > 0 ? `${wholePart}.${fractionPart}` : wholePart;
+}

@@ -13,3 +13,10 @@ export function createEscrowProgram(connection: Connection, wallet: AnchorWallet
   const provider = new AnchorProvider(connection, wallet, { commitment: "confirmed" });
   return new Program(escrowIdl, provider);
 }
+
+// Builds a program client for read-only use (fetching and decoding
+// accounts) without a connected wallet, so the marketplace list works
+// before anyone connects. Never used to sign or send a transaction.
+export function createReadOnlyEscrowProgram(connection: Connection): Program {
+  return new Program(escrowIdl, { connection });
+}

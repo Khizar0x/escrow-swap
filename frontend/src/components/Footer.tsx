@@ -22,7 +22,7 @@ export function Footer() {
             rel="noopener noreferrer"
             className="w-fit font-mono text-sm text-accent underline-offset-4 hover:underline"
           >
-            {shortenAddress(escrowIdl.address, 6)}
+            {shortenAddress(escrowIdl.address)}
           </a>
           <p className="text-sm text-muted">View the program on Solana Explorer</p>
         </div>

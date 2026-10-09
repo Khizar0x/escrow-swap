@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AmountError, toBaseUnits } from "./amounts";
+import { AmountError, fromBaseUnits, toBaseUnits } from "./amounts";
 
 describe("toBaseUnits", () => {
   it("converts a whole number", () => {
@@ -51,5 +51,36 @@ describe("toBaseUnits", () => {
 
   it("rejects a negative amount", () => {
     expect(() => toBaseUnits("-1", 6)).toThrow(AmountError);
+  });
+});
+
+describe("fromBaseUnits", () => {
+  it("is the inverse of toBaseUnits for an exact fraction", () => {
+    expect(fromBaseUnits(BigInt(1_500_000), 6)).toBe("1.5");
+  });
+
+  it("works at zero decimals", () => {
+    expect(fromBaseUnits(BigInt(3), 0)).toBe("3");
+  });
+
+  it("trims trailing zeros but keeps the whole number at 6 decimals", () => {
+    expect(fromBaseUnits(BigInt(5_000_000), 6)).toBe("5");
+  });
+
+  it("shows amounts below 1 with their leading zero", () => {
+    expect(fromBaseUnits(BigInt(100_000), 6)).toBe("0.1");
+    expect(fromBaseUnits(BigInt(1), 9)).toBe("0.000000001");
+  });
+
+  it("handles 9 decimals", () => {
+    expect(fromBaseUnits(BigInt(1_234_567_890), 9)).toBe("1.23456789");
+  });
+
+  it("handles u64 max", () => {
+    expect(fromBaseUnits(BigInt(2) ** BigInt(64) - BigInt(1), 6)).toBe("18446744073709.551615");
+  });
+
+  it("handles zero itself", () => {
+    expect(fromBaseUnits(BigInt(0), 6)).toBe("0");
   });
 });

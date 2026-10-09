@@ -24,7 +24,7 @@ export function CopyButton({ value, label = "Copy address" }: { value: string; l
       type="button"
       onClick={handleClick}
       aria-label={copied ? "Copied" : label}
-      className={`inline-flex size-8 flex-none items-center justify-center rounded-control border border-control bg-raised transition-colors duration-200 ease-out hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 ${copied ? "text-success" : "text-muted"}`}
+      className={`inline-flex size-8 flex-none cursor-pointer items-center justify-center rounded-control border border-control bg-raised transition-colors duration-200 ease-out hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 ${copied ? "text-success" : "text-muted"}`}
     >
       {copied ? <CheckIcon /> : <CopyIcon />}
     </button>
