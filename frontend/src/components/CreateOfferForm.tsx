@@ -183,7 +183,7 @@ export function CreateOfferForm() {
               <p role="alert">{banner.message}</p>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={() => dispatchBanner({ type: "dismissed" })}>
+          <Button variant="secondary" size="sm" onClick={() => dispatchBanner({ type: "dismissed" })}>
             Dismiss
           </Button>
         </div>
