@@ -143,8 +143,19 @@ body {
    class names (see @solana/wallet-adapter-react-ui/styles.css) — the library
    itself is never forked or copied, only overridden. Everything below reads
    from the same custom properties the rest of the app uses, so it follows
-   dark/light automatically with no separate light-mode block. */
-.wallet-adapter-modal-wrapper {
+   dark/light automatically with no separate light-mode block.
+
+   Every selector below is prefixed with the library's own ".wallet-adapter-modal"
+   ancestor class (present on the real rendered markup, see WalletModal.js), not
+   just the bare class the library itself uses. The library's stylesheet ends up
+   concatenated after this file in the build (it's imported inside SolanaProvider,
+   a component nested under the root layout that owns this file), so on several
+   properties our rule tied the library's own rule on specificity — and a tie is
+   broken by source order, which the library's later-loaded rule was winning. The
+   ancestor prefix gives our rule strictly higher specificity than the library's,
+   so ours always wins regardless of load order, without !important and without
+   touching the library's file. */
+.wallet-adapter-modal .wallet-adapter-modal-wrapper {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-inner);
@@ -153,55 +164,55 @@ body {
   color: var(--ink);
 }
 
-.wallet-adapter-modal-title {
+.wallet-adapter-modal .wallet-adapter-modal-title {
   color: var(--ink);
   font-family: inherit;
 }
 
-.wallet-adapter-modal-button-close {
+.wallet-adapter-modal .wallet-adapter-modal-button-close {
   background: var(--raised);
   border: 1px solid var(--border);
 }
 
-.wallet-adapter-modal-button-close svg {
+.wallet-adapter-modal .wallet-adapter-modal-button-close svg {
   fill: var(--muted);
 }
 
-.wallet-adapter-modal-button-close:hover svg {
+.wallet-adapter-modal .wallet-adapter-modal-button-close:hover svg {
   fill: var(--ink);
 }
 
-.wallet-adapter-modal-button-close:focus-visible {
+.wallet-adapter-modal .wallet-adapter-modal-button-close:focus-visible {
   outline-color: var(--focus);
 }
 
-.wallet-adapter-modal-list .wallet-adapter-button {
+.wallet-adapter-modal .wallet-adapter-modal-list .wallet-adapter-button {
   color: var(--ink);
   font-family: inherit;
   border-radius: var(--radius-control);
 }
 
-.wallet-adapter-button:not([disabled]):hover {
+.wallet-adapter-modal .wallet-adapter-button:not([disabled]):hover {
   background-color: var(--raised);
 }
 
-.wallet-adapter-button:not([disabled]):focus-visible {
+.wallet-adapter-modal .wallet-adapter-button:not([disabled]):focus-visible {
   outline-color: var(--focus);
 }
 
-.wallet-adapter-button[disabled] {
+.wallet-adapter-modal .wallet-adapter-button[disabled] {
   background: var(--raised);
   color: var(--muted);
 }
 
-.wallet-adapter-modal-list-more {
+.wallet-adapter-modal .wallet-adapter-modal-list-more {
   color: var(--muted);
 }
 
-.wallet-adapter-modal-list-more:hover {
+.wallet-adapter-modal .wallet-adapter-modal-list-more:hover {
   color: var(--ink);
 }
 
-.wallet-adapter-modal-list-more svg {
+.wallet-adapter-modal .wallet-adapter-modal-list-more svg {
   fill: var(--muted);
 }
