@@ -1,7 +1,7 @@
 import type { Program } from "@anchor-lang/core";
 import type { Connection } from "@solana/web3.js";
 import { PublicKey } from "@solana/web3.js";
-import { fetchMintDecimals } from "@/lib/escrow/createOffer";
+import { resolveTokenProgram } from "@/lib/solana/tokenProgram";
 
 export interface Offer {
   offerAddress: PublicKey;
@@ -88,7 +88,8 @@ export async function fetchOfferTokenDecimals(
   await Promise.all(
     Array.from(mints).map(async (mint) => {
       try {
-        decimals.set(mint, await fetchMintDecimals(connection, new PublicKey(mint)));
+        const resolved = await resolveTokenProgram(connection, new PublicKey(mint));
+        decimals.set(mint, resolved.decimals);
       } catch {
         unavailable.add(mint);
       }

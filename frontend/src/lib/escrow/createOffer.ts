@@ -1,17 +1,11 @@
 import { BN, type Program } from "@anchor-lang/core";
 import { type Connection, PublicKey, SystemProgram, type Transaction } from "@solana/web3.js";
 import { isUserRejection, toPlainErrorMessage, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
-import {
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID,
-  TOKEN_PROGRAM_ID,
-  associatedTokenAddress,
-} from "@/lib/solana/ata";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, associatedTokenAddress } from "@/lib/solana/ata";
 import { AmountError } from "@/lib/solana/amounts";
 import { offerAddress } from "@/lib/solana/pda";
+import { TokenProgramError } from "@/lib/solana/tokenProgram";
 
-// Byte offset of the decimals field in a classic SPL mint account.
-const MINT_DECIMALS_OFFSET = 44;
 const MAX_OFFER_ID_ATTEMPTS = 5;
 
 export class CreateOfferError extends Error {}
@@ -19,6 +13,17 @@ export class CreateOfferError extends Error {}
 export function assertDistinctMints(mintA: PublicKey, mintB: PublicKey): void {
   if (mintA.equals(mintB)) {
     throw new CreateOfferError("Choose two different tokens.");
+  }
+}
+
+// take_offer has exactly one token-program account, shared by both mints'
+// token accounts (see take_offer.rs), so an offer can only ever be taken if
+// both of its tokens are owned by the same token program. Rejected here, at
+// create time, rather than letting an offer end up impossible for anyone to
+// take later.
+export function assertSameTokenProgram(tokenProgramA: PublicKey, tokenProgramB: PublicKey): void {
+  if (!tokenProgramA.equals(tokenProgramB)) {
+    throw new CreateOfferError("These two tokens can't be combined. Choose a different pair.");
   }
 }
 
@@ -51,38 +56,16 @@ export async function pickOfferId(
   throw new CreateOfferError("Could not start the offer. Try again.");
 }
 
-// Reads a mint's decimal count, after confirming it is a classic SPL token.
-// A Token-2022 mint is rejected with a clear message rather than guessed at,
-// and a lookup that fails for any other reason never falls back to 0
-// decimals, which would silently show the wrong amount.
-export async function fetchMintDecimals(connection: Connection, mint: PublicKey): Promise<number> {
-  let info;
-  try {
-    info = await connection.getAccountInfo(mint);
-  } catch {
-    throw new CreateOfferError("Could not check this token. Try again.");
-  }
-
-  if (!info) {
-    throw new CreateOfferError("Could not find that token. Check the address.");
-  }
-  if (info.owner.equals(TOKEN_2022_PROGRAM_ID)) {
-    throw new CreateOfferError("This token type is not supported yet.");
-  }
-  if (!info.owner.equals(TOKEN_PROGRAM_ID)) {
-    throw new CreateOfferError("This address is not a token.");
-  }
-  return info.data.readUInt8(MINT_DECIMALS_OFFSET);
-}
-
-// The wallet's balance of a token, in base units. An account that does not
-// exist yet (the wallet has never held this token) is treated as zero.
+// The wallet's balance of a token, in base units, under the given token
+// program. An account that does not exist yet (the wallet has never held
+// this token) is treated as zero.
 export async function fetchTokenBalance(
   connection: Connection,
   owner: PublicKey,
-  mint: PublicKey
+  mint: PublicKey,
+  tokenProgramId: PublicKey
 ): Promise<bigint> {
-  const ata = associatedTokenAddress(mint, owner);
+  const ata = associatedTokenAddress(mint, owner, tokenProgramId);
   try {
     const { value } = await connection.getTokenAccountBalance(ata);
     return BigInt(value.amount);
@@ -96,6 +79,8 @@ export interface BuildCreateOfferTransactionInput {
   maker: PublicKey;
   mintA: PublicKey;
   mintB: PublicKey;
+  tokenProgramA: PublicKey;
+  tokenProgramB: PublicKey;
   amountA: bigint;
   amountB: bigint;
   offerId: bigint;
@@ -115,15 +100,18 @@ export async function buildCreateOfferTransaction({
   maker,
   mintA,
   mintB,
+  tokenProgramA,
+  tokenProgramB,
   amountA,
   amountB,
   offerId,
 }: BuildCreateOfferTransactionInput): Promise<BuildCreateOfferTransactionResult> {
   assertDistinctMints(mintA, mintB);
+  assertSameTokenProgram(tokenProgramA, tokenProgramB);
 
   const offer = offerAddress(program.programId, maker, offerId);
-  const vault = associatedTokenAddress(mintA, offer);
-  const makerTokenAccountA = associatedTokenAddress(mintA, maker);
+  const vault = associatedTokenAddress(mintA, offer, tokenProgramA);
+  const makerTokenAccountA = associatedTokenAddress(mintA, maker, tokenProgramA);
 
   const transaction = await program.methods
     .makeOffer(new BN(offerId.toString()), new BN(amountA.toString()), new BN(amountB.toString()))
@@ -135,7 +123,7 @@ export async function buildCreateOfferTransaction({
       offer,
       vault,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: tokenProgramA,
       systemProgram: SystemProgram.programId,
     })
     .transaction();
@@ -143,12 +131,12 @@ export async function buildCreateOfferTransaction({
   return { transaction, offerAddress: offer };
 }
 
-// Maps any error from the pre-send steps (parsing input, looking up a mint,
+// Maps any error from the pre-send steps (parsing input, looking up a token,
 // checking a balance, picking an offer ID) to a message safe to show on
-// screen. AmountError and CreateOfferError are already plain-language;
-// anything else — including a bug — is never shown raw.
+// screen. AmountError, CreateOfferError, and TokenProgramError are already
+// plain-language; anything else — including a bug — is never shown raw.
 export function toCreateOfferFormMessage(error: unknown): string {
-  if (error instanceof AmountError || error instanceof CreateOfferError) {
+  if (error instanceof AmountError || error instanceof CreateOfferError || error instanceof TokenProgramError) {
     return error.message;
   }
   if (isUserRejection(error)) {

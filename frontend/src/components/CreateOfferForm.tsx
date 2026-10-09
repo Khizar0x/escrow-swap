@@ -13,9 +13,9 @@ import { useEscrowProgram } from "@/hooks/useEscrowProgram";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import {
   assertDistinctMints,
+  assertSameTokenProgram,
   assertSufficientBalance,
   buildCreateOfferTransaction,
-  fetchMintDecimals,
   fetchTokenBalance,
   pickOfferId,
   toCreateOfferFormMessage,
@@ -23,6 +23,7 @@ import {
 import { shortenAddress } from "@/lib/format/address";
 import { toBaseUnits } from "@/lib/solana/amounts";
 import { explorerAddressUrl, explorerTransactionUrl } from "@/lib/solana/explorer";
+import { resolveTokenProgram } from "@/lib/solana/tokenProgram";
 import { createInFlightGuard } from "@/lib/tx/inFlightGuard";
 import { type SendState } from "@/lib/tx/useSendTransaction";
 import { type TransactionStatus } from "@/lib/tx/sendTransaction";
@@ -117,15 +118,16 @@ export function CreateOfferForm() {
       try {
         assertDistinctMints(mintA, mintB);
 
-        const [decimalsA, decimalsB] = await Promise.all([
-          fetchMintDecimals(connection, mintA),
-          fetchMintDecimals(connection, mintB),
+        const [tokenA, tokenB] = await Promise.all([
+          resolveTokenProgram(connection, mintA),
+          resolveTokenProgram(connection, mintB),
         ]);
+        assertSameTokenProgram(tokenA.programId, tokenB.programId);
 
-        const amountA = toBaseUnits(fields.giveAmount, decimalsA);
-        const amountB = toBaseUnits(fields.wantAmount, decimalsB);
+        const amountA = toBaseUnits(fields.giveAmount, tokenA.decimals);
+        const amountB = toBaseUnits(fields.wantAmount, tokenB.decimals);
 
-        const balance = await fetchTokenBalance(connection, publicKey, mintA);
+        const balance = await fetchTokenBalance(connection, publicKey, mintA, tokenA.programId);
         assertSufficientBalance(amountA, balance);
 
         const offerId = await pickOfferId(connection, programState.program.programId, publicKey);
@@ -136,6 +138,8 @@ export function CreateOfferForm() {
             maker: publicKey,
             mintA,
             mintB,
+            tokenProgramA: tokenA.programId,
+            tokenProgramB: tokenB.programId,
             amountA,
             amountB,
             offerId,

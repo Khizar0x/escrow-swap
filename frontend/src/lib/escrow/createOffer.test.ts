@@ -5,14 +5,15 @@ import { WalletSignTransactionError } from "@solana/wallet-adapter-base";
 import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@/lib/solana/ata";
 import { AmountError } from "@/lib/solana/amounts";
 import { offerAddress } from "@/lib/solana/pda";
+import { TokenProgramError } from "@/lib/solana/tokenProgram";
 import { createEscrowProgram } from "@/lib/anchor/program";
 import { GENERIC_ERROR_MESSAGE, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import {
   CreateOfferError,
   assertDistinctMints,
+  assertSameTokenProgram,
   assertSufficientBalance,
   buildCreateOfferTransaction,
-  fetchMintDecimals,
   pickOfferId,
   randomOfferId,
   toCreateOfferFormMessage,
@@ -30,6 +31,19 @@ describe("assertDistinctMints", () => {
 
   it("rejects the same mint for both sides", () => {
     expect(() => assertDistinctMints(MINT_A, MINT_A)).toThrow(CreateOfferError);
+  });
+});
+
+describe("assertSameTokenProgram", () => {
+  it("passes when both tokens share a token program", () => {
+    expect(() => assertSameTokenProgram(TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID)).not.toThrow();
+    expect(() => assertSameTokenProgram(TOKEN_2022_PROGRAM_ID, TOKEN_2022_PROGRAM_ID)).not.toThrow();
+  });
+
+  it("rejects a classic token paired with a Token-2022 token", () => {
+    expect(() => assertSameTokenProgram(TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID)).toThrow(
+      "These two tokens can't be combined. Choose a different pair."
+    );
   });
 });
 
@@ -84,57 +98,6 @@ describe("pickOfferId", () => {
   });
 });
 
-describe("fetchMintDecimals", () => {
-  it("reads the decimals byte from a classic SPL mint", async () => {
-    const data = Buffer.alloc(82);
-    data.writeUInt8(6, 44);
-    const getAccountInfo = vi.fn().mockResolvedValue({ data, owner: TOKEN_PROGRAM_ID });
-    const connection = { getAccountInfo } as unknown as Connection;
-
-    await expect(fetchMintDecimals(connection, MINT_A)).resolves.toBe(6);
-  });
-
-  it("rejects a mint address that does not exist", async () => {
-    const getAccountInfo = vi.fn().mockResolvedValue(null);
-    const connection = { getAccountInfo } as unknown as Connection;
-
-    await expect(fetchMintDecimals(connection, MINT_A)).rejects.toThrow(
-      "Could not find that token. Check the address."
-    );
-  });
-
-  it("rejects a Token-2022 mint with a specific message, never falling back to 0 decimals", async () => {
-    const data = Buffer.alloc(82);
-    const getAccountInfo = vi
-      .fn()
-      .mockResolvedValue({ data, owner: TOKEN_2022_PROGRAM_ID });
-    const connection = { getAccountInfo } as unknown as Connection;
-
-    await expect(fetchMintDecimals(connection, MINT_A)).rejects.toThrow(
-      "This token type is not supported yet."
-    );
-  });
-
-  it("rejects an address owned by neither token program", async () => {
-    const data = Buffer.alloc(82);
-    const getAccountInfo = vi.fn().mockResolvedValue({ data, owner: PROGRAM_ID });
-    const connection = { getAccountInfo } as unknown as Connection;
-
-    await expect(fetchMintDecimals(connection, MINT_A)).rejects.toThrow(
-      "This address is not a token."
-    );
-  });
-
-  it("gives a clear error when the lookup itself fails, not a raw error", async () => {
-    const getAccountInfo = vi.fn().mockRejectedValue(new Error("fetch failed"));
-    const connection = { getAccountInfo } as unknown as Connection;
-
-    await expect(fetchMintDecimals(connection, MINT_A)).rejects.toThrow(
-      "Could not check this token. Try again."
-    );
-  });
-});
-
 describe("buildCreateOfferTransaction", () => {
   function fakeWallet() {
     const keypair = Keypair.generate();
@@ -155,6 +118,8 @@ describe("buildCreateOfferTransaction", () => {
       maker: MAKER,
       mintA: MINT_A,
       mintB: MINT_B,
+      tokenProgramA: TOKEN_PROGRAM_ID,
+      tokenProgramB: TOKEN_PROGRAM_ID,
       amountA: BigInt(1_000_000),
       amountB: BigInt(2_000_000),
       offerId,
@@ -163,6 +128,27 @@ describe("buildCreateOfferTransaction", () => {
     expect(result.transaction.instructions).toHaveLength(1);
     expect(result.transaction.instructions[0].programId.equals(program.programId)).toBe(true);
     expect(result.offerAddress.equals(offerAddress(PROGRAM_ID, MAKER, offerId))).toBe(true);
+  });
+
+  it("builds a Token-2022 offer when both tokens are Token-2022", async () => {
+    const connection = new RealConnection("http://127.0.0.1:1", "confirmed");
+    const program = createEscrowProgram(connection, fakeWallet());
+
+    const result = await buildCreateOfferTransaction({
+      program,
+      maker: MAKER,
+      mintA: MINT_A,
+      mintB: MINT_B,
+      tokenProgramA: TOKEN_2022_PROGRAM_ID,
+      tokenProgramB: TOKEN_2022_PROGRAM_ID,
+      amountA: BigInt(1_000_000),
+      amountB: BigInt(2_000_000),
+      offerId: BigInt(43),
+    });
+
+    expect(result.transaction.instructions[0].keys.some((key) => key.pubkey.equals(TOKEN_2022_PROGRAM_ID))).toBe(
+      true
+    );
   });
 
   it("rejects building a transaction for the same mint on both sides", async () => {
@@ -175,11 +161,32 @@ describe("buildCreateOfferTransaction", () => {
         maker: MAKER,
         mintA: MINT_A,
         mintB: MINT_A,
+        tokenProgramA: TOKEN_PROGRAM_ID,
+        tokenProgramB: TOKEN_PROGRAM_ID,
         amountA: BigInt(1),
         amountB: BigInt(1),
         offerId: BigInt(1),
       })
     ).rejects.toThrow(CreateOfferError);
+  });
+
+  it("rejects building a transaction when the two tokens don't share a token program", async () => {
+    const connection = new RealConnection("http://127.0.0.1:1", "confirmed");
+    const program = createEscrowProgram(connection, fakeWallet());
+
+    await expect(
+      buildCreateOfferTransaction({
+        program,
+        maker: MAKER,
+        mintA: MINT_A,
+        mintB: MINT_B,
+        tokenProgramA: TOKEN_PROGRAM_ID,
+        tokenProgramB: TOKEN_2022_PROGRAM_ID,
+        amountA: BigInt(1),
+        amountB: BigInt(1),
+        offerId: BigInt(1),
+      })
+    ).rejects.toThrow("These two tokens can't be combined. Choose a different pair.");
   });
 });
 
@@ -206,6 +213,12 @@ describe("toCreateOfferFormMessage", () => {
 
   it("never shows a raw error for an unexpected plain Error", () => {
     expect(toCreateOfferFormMessage(new Error("boom"))).toBe(GENERIC_ERROR_MESSAGE);
+  });
+
+  it("passes through a TokenProgramError's own message unchanged", () => {
+    expect(
+      toCreateOfferFormMessage(new TokenProgramError("This token takes a fee on every transfer. It isn't supported here."))
+    ).toBe("This token takes a fee on every transfer. It isn't supported here.");
   });
 
   it("maps a wallet rejection to the plain create message, not the generic one", () => {

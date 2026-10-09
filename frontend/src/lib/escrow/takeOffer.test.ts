@@ -4,11 +4,12 @@ import type { Connection } from "@solana/web3.js";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { WalletSignTransactionError } from "@solana/wallet-adapter-base";
 import { createEscrowProgram } from "@/lib/anchor/program";
-import { CreateOfferError, fetchMintDecimals } from "@/lib/escrow/createOffer";
+import { CreateOfferError } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
 import { GENERIC_ERROR_MESSAGE, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, associatedTokenAddress } from "@/lib/solana/ata";
 import { offerAddress } from "@/lib/solana/pda";
+import { TokenProgramError } from "@/lib/solana/tokenProgram";
 import {
   TakeOfferError,
   assertNotOwnOffer,
@@ -108,7 +109,9 @@ describe("assertSufficientTakerBalance", () => {
     const connection = { getTokenAccountBalance } as unknown as Connection;
     const offer = makeOffer({}, PublicKey.default);
 
-    await expect(assertSufficientTakerBalance(connection, TAKER, offer, 6)).resolves.toBeUndefined();
+    await expect(
+      assertSufficientTakerBalance(connection, TAKER, offer, 6, TOKEN_PROGRAM_ID)
+    ).resolves.toBeUndefined();
   });
 
   it("rejects with the amounts in plain decimals when the balance is too low", async () => {
@@ -116,9 +119,9 @@ describe("assertSufficientTakerBalance", () => {
     const connection = { getTokenAccountBalance } as unknown as Connection;
     const offer = makeOffer({ amountB: BigInt(2_000_000) }, PublicKey.default);
 
-    await expect(assertSufficientTakerBalance(connection, TAKER, offer, 6)).rejects.toThrow(
-      "You need 2 of this token to take this offer, but you have 0.5."
-    );
+    await expect(
+      assertSufficientTakerBalance(connection, TAKER, offer, 6, TOKEN_PROGRAM_ID)
+    ).rejects.toThrow("You need 2 of this token to take this offer, but you have 0.5.");
   });
 });
 
@@ -126,26 +129,22 @@ describe("needsTakerTokenAccountA", () => {
   it("is true when the taker has no account for that token yet", async () => {
     const getAccountInfo = vi.fn().mockResolvedValue(null);
     const connection = { getAccountInfo } as unknown as Connection;
-    await expect(needsTakerTokenAccountA(connection, TAKER, MINT_A)).resolves.toBe(true);
+    await expect(needsTakerTokenAccountA(connection, TAKER, MINT_A, TOKEN_PROGRAM_ID)).resolves.toBe(true);
   });
 
   it("is false when the account already exists", async () => {
     const getAccountInfo = vi.fn().mockResolvedValue({ data: Buffer.alloc(0) });
     const connection = { getAccountInfo } as unknown as Connection;
-    await expect(needsTakerTokenAccountA(connection, TAKER, MINT_A)).resolves.toBe(false);
+    await expect(needsTakerTokenAccountA(connection, TAKER, MINT_A, TOKEN_PROGRAM_ID)).resolves.toBe(false);
   });
-});
 
-describe("rejecting a Token-2022 mint (reusing the same check as Create Offer)", () => {
-  it("never falls back to 0 decimals", async () => {
-    const data = Buffer.alloc(82);
-    const getAccountInfo = vi.fn().mockResolvedValue({ data, owner: TOKEN_2022_PROGRAM_ID });
+  it("checks under the given token program, not always the classic one", async () => {
+    const getAccountInfo = vi.fn().mockResolvedValue(null);
     const connection = { getAccountInfo } as unknown as Connection;
 
-    await expect(fetchMintDecimals(connection, MINT_B)).rejects.toThrow(CreateOfferError);
-    await expect(fetchMintDecimals(connection, MINT_B)).rejects.toThrow(
-      "This token type is not supported yet."
-    );
+    await needsTakerTokenAccountA(connection, TAKER, MINT_A, TOKEN_2022_PROGRAM_ID);
+
+    expect(getAccountInfo).toHaveBeenCalledWith(associatedTokenAddress(MINT_A, TAKER, TOKEN_2022_PROGRAM_ID));
   });
 });
 
@@ -160,7 +159,14 @@ describe("buildTakeOfferTransaction", () => {
     const offer = makeOffer({ maker: TAKER }, p.programId);
 
     await expect(
-      buildTakeOfferTransaction({ program: p, taker: TAKER, offer, createsTakerTokenAccountA: false })
+      buildTakeOfferTransaction({
+        program: p,
+        taker: TAKER,
+        offer,
+        tokenProgramA: TOKEN_PROGRAM_ID,
+        tokenProgramB: TOKEN_PROGRAM_ID,
+        createsTakerTokenAccountA: false,
+      })
     ).rejects.toThrow("You made this offer. Use My Offers to cancel it.");
   });
 
@@ -169,8 +175,31 @@ describe("buildTakeOfferTransaction", () => {
     const offer = makeOffer({ offerAddress: Keypair.generate().publicKey }, p.programId);
 
     await expect(
-      buildTakeOfferTransaction({ program: p, taker: TAKER, offer, createsTakerTokenAccountA: false })
+      buildTakeOfferTransaction({
+        program: p,
+        taker: TAKER,
+        offer,
+        tokenProgramA: TOKEN_PROGRAM_ID,
+        tokenProgramB: TOKEN_PROGRAM_ID,
+        createsTakerTokenAccountA: false,
+      })
     ).rejects.toThrow("This offer is no longer available. It may have been taken or canceled.");
+  });
+
+  it("rejects when the offer's two tokens don't share a token program", async () => {
+    const p = program();
+    const offer = makeOffer({}, p.programId);
+
+    await expect(
+      buildTakeOfferTransaction({
+        program: p,
+        taker: TAKER,
+        offer,
+        tokenProgramA: TOKEN_PROGRAM_ID,
+        tokenProgramB: TOKEN_2022_PROGRAM_ID,
+        createsTakerTokenAccountA: false,
+      })
+    ).rejects.toThrow("These two tokens can't be combined. Choose a different pair.");
   });
 
   it("adds a create-token-account instruction before take_offer when the taker needs one", async () => {
@@ -181,6 +210,8 @@ describe("buildTakeOfferTransaction", () => {
       program: p,
       taker: TAKER,
       offer,
+      tokenProgramA: TOKEN_PROGRAM_ID,
+      tokenProgramB: TOKEN_PROGRAM_ID,
       createsTakerTokenAccountA: true,
     });
 
@@ -198,6 +229,8 @@ describe("buildTakeOfferTransaction", () => {
       program: p,
       taker: TAKER,
       offer,
+      tokenProgramA: TOKEN_PROGRAM_ID,
+      tokenProgramB: TOKEN_PROGRAM_ID,
       createsTakerTokenAccountA: false,
     });
 
@@ -212,6 +245,8 @@ describe("buildTakeOfferTransaction", () => {
       program: p,
       taker: TAKER,
       offer,
+      tokenProgramA: TOKEN_PROGRAM_ID,
+      tokenProgramB: TOKEN_PROGRAM_ID,
       createsTakerTokenAccountA: false,
     });
 
@@ -222,10 +257,10 @@ describe("buildTakeOfferTransaction", () => {
       offer.tokenA,
       offer.tokenB,
       offer.offerAddress,
-      associatedTokenAddress(offer.tokenA, offer.offerAddress),
-      associatedTokenAddress(offer.tokenA, TAKER),
-      associatedTokenAddress(offer.tokenB, TAKER),
-      associatedTokenAddress(offer.tokenB, offer.maker),
+      associatedTokenAddress(offer.tokenA, offer.offerAddress, TOKEN_PROGRAM_ID),
+      associatedTokenAddress(offer.tokenA, TAKER, TOKEN_PROGRAM_ID),
+      associatedTokenAddress(offer.tokenB, TAKER, TOKEN_PROGRAM_ID),
+      associatedTokenAddress(offer.tokenB, offer.maker, TOKEN_PROGRAM_ID),
       ASSOCIATED_TOKEN_PROGRAM_ID,
       TOKEN_PROGRAM_ID,
       SystemProgram.programId,
@@ -235,6 +270,26 @@ describe("buildTakeOfferTransaction", () => {
     takeIx.keys.forEach((key, index) => {
       expect(key.pubkey.equals(expected[index])).toBe(true);
     });
+  });
+
+  it("uses the Token-2022 program throughout when both tokens are Token-2022", async () => {
+    const p = program();
+    const offer = makeOffer({}, p.programId);
+
+    const result = await buildTakeOfferTransaction({
+      program: p,
+      taker: TAKER,
+      offer,
+      tokenProgramA: TOKEN_2022_PROGRAM_ID,
+      tokenProgramB: TOKEN_2022_PROGRAM_ID,
+      createsTakerTokenAccountA: false,
+    });
+
+    const takeIx = result.transaction.instructions[0];
+    expect(takeIx.keys[5].pubkey.equals(associatedTokenAddress(offer.tokenA, offer.offerAddress, TOKEN_2022_PROGRAM_ID))).toBe(
+      true
+    );
+    expect(takeIx.keys[10].pubkey.equals(TOKEN_2022_PROGRAM_ID)).toBe(true);
   });
 });
 
@@ -246,9 +301,15 @@ describe("toTakeOfferFormMessage", () => {
   });
 
   it("passes through a reused CreateOfferError's own message unchanged", () => {
-    expect(toTakeOfferFormMessage(new CreateOfferError("This token type is not supported yet."))).toBe(
-      "This token type is not supported yet."
+    expect(toTakeOfferFormMessage(new CreateOfferError("These two tokens can't be combined. Choose a different pair."))).toBe(
+      "These two tokens can't be combined. Choose a different pair."
     );
+  });
+
+  it("passes through a TokenProgramError's own message unchanged", () => {
+    expect(
+      toTakeOfferFormMessage(new TokenProgramError("This token takes a fee on every transfer. It isn't supported here."))
+    ).toBe("This token takes a fee on every transfer. It isn't supported here.");
   });
 
   it("never shows a raw error for an unexpected failure", () => {

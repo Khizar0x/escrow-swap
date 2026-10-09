@@ -3,8 +3,9 @@ import { PublicKey, SystemProgram, type Transaction } from "@solana/web3.js";
 import { CreateOfferError } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
 import { isUserRejection, toPlainErrorMessage, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, associatedTokenAddress } from "@/lib/solana/ata";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, associatedTokenAddress } from "@/lib/solana/ata";
 import { offerAddress as deriveOfferAddress } from "@/lib/solana/pda";
+import { TokenProgramError } from "@/lib/solana/tokenProgram";
 
 export class CancelOfferError extends Error {}
 
@@ -23,6 +24,7 @@ export interface BuildCancelOfferTransactionInput {
   program: Program;
   maker: PublicKey;
   offer: Offer;
+  tokenProgram: PublicKey;
 }
 
 export interface BuildCancelOfferTransactionResult {
@@ -38,6 +40,7 @@ export async function buildCancelOfferTransaction({
   program,
   maker,
   offer,
+  tokenProgram,
 }: BuildCancelOfferTransactionInput): Promise<BuildCancelOfferTransactionResult> {
   assertIsMaker(offer, maker);
 
@@ -46,8 +49,8 @@ export async function buildCancelOfferTransaction({
     throw new CancelOfferError("This offer is no longer available. It may have been taken or canceled.");
   }
 
-  const vault = associatedTokenAddress(offer.tokenA, offer.offerAddress);
-  const makerTokenAccountA = associatedTokenAddress(offer.tokenA, maker);
+  const vault = associatedTokenAddress(offer.tokenA, offer.offerAddress, tokenProgram);
+  const makerTokenAccountA = associatedTokenAddress(offer.tokenA, maker, tokenProgram);
 
   const transaction = await program.methods
     .cancelOffer()
@@ -58,7 +61,7 @@ export async function buildCancelOfferTransaction({
       makerTokenAccountA,
       vault,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram,
       systemProgram: SystemProgram.programId,
     })
     .transaction();
@@ -67,10 +70,10 @@ export async function buildCancelOfferTransaction({
 }
 
 // Maps any error from the pre-send steps (re-fetching the offer, checking
-// who the maker is, checking the token's decimals) to a message safe to
-// show on screen.
+// who the maker is, checking the token's owning program) to a message safe
+// to show on screen.
 export function toCancelOfferFormMessage(error: unknown): string {
-  if (error instanceof CancelOfferError || error instanceof CreateOfferError) {
+  if (error instanceof CancelOfferError || error instanceof CreateOfferError || error instanceof TokenProgramError) {
     return error.message;
   }
   if (isUserRejection(error)) {

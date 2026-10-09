@@ -13,9 +13,9 @@ import {
   fetchFreshOffer,
   toCancelOfferFormMessage,
 } from "@/lib/escrow/cancelOffer";
-import { fetchMintDecimals } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
 import { shortenAddress } from "@/lib/format/address";
+import { resolveTokenProgram } from "@/lib/solana/tokenProgram";
 import { createInFlightGuard } from "@/lib/tx/inFlightGuard";
 import { type SendState } from "@/lib/tx/useSendTransaction";
 import { type TransactionStatus } from "@/lib/tx/sendTransaction";
@@ -106,15 +106,17 @@ export function CancelOfferAction({
         const freshOffer = await fetchFreshOffer(programState.program, offer.offerAddress);
         assertIsMaker(freshOffer, publicKey);
 
-        // Classic tokens only; fetchMintDecimals rejects Token-2022 with a
-        // plain message and never falls back to 0 decimals.
-        await fetchMintDecimals(connection, freshOffer.tokenA);
+        // Resolved fresh here, never assumed — resolveTokenProgram also
+        // rejects a token this app can't support (a Token-2022 feature it
+        // doesn't know how to handle safely, or a freeze authority).
+        const token = await resolveTokenProgram(connection, freshOffer.tokenA);
 
         await send(programState.program, async () => {
           const result = await buildCancelOfferTransaction({
             program: programState.program,
             maker: publicKey,
             offer: freshOffer,
+            tokenProgram: token.programId,
           });
           return result.transaction;
         });

@@ -7,7 +7,6 @@ import { TransactionStatusSteps } from "@/components/TransactionStatusSteps";
 import { Button } from "@/components/ui/Button";
 import { useEscrowProgram } from "@/hooks/useEscrowProgram";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
-import { fetchMintDecimals } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
 import {
   assertNotOwnOffer,
@@ -17,7 +16,9 @@ import {
   needsTakerTokenAccountA,
   toTakeOfferFormMessage,
 } from "@/lib/escrow/takeOffer";
+import { assertSameTokenProgram } from "@/lib/escrow/createOffer";
 import { shortenAddress } from "@/lib/format/address";
+import { resolveTokenProgram } from "@/lib/solana/tokenProgram";
 import { createInFlightGuard } from "@/lib/tx/inFlightGuard";
 import { type SendState } from "@/lib/tx/useSendTransaction";
 import { type TransactionStatus } from "@/lib/tx/sendTransaction";
@@ -93,7 +94,8 @@ export function TakeOfferAction({
     setWillCreateAccount(null);
     setPanelOpen(true);
     try {
-      const needsAccount = await needsTakerTokenAccountA(connection, publicKey!, offer.tokenA);
+      const tokenA = await resolveTokenProgram(connection, offer.tokenA);
+      const needsAccount = await needsTakerTokenAccountA(connection, publicKey!, offer.tokenA, tokenA.programId);
       setWillCreateAccount(needsAccount);
     } catch {
       setWillCreateAccount(false);
@@ -115,24 +117,34 @@ export function TakeOfferAction({
         const freshOffer = await fetchFreshOffer(programState.program, offer.offerAddress);
         assertNotOwnOffer(freshOffer, publicKey);
 
-        // Both tokens must be classic tokens; fetchMintDecimals rejects
-        // Token-2022 (and anything else that isn't a classic mint) with a
-        // plain message. Only token B's decimals are needed past this point,
-        // to show the balance check's amounts in plain decimals.
-        const [, decimalsB] = await Promise.all([
-          fetchMintDecimals(connection, freshOffer.tokenA),
-          fetchMintDecimals(connection, freshOffer.tokenB),
+        // Each token's own program (classic or Token-2022) is resolved
+        // fresh here, never assumed — resolveTokenProgram also rejects a
+        // token this app can't support (a Token-2022 feature it doesn't
+        // know how to handle safely, or a freeze authority). Only token B's
+        // decimals are needed past this point, to show the balance check's
+        // amounts in plain decimals.
+        const [tokenA, tokenB] = await Promise.all([
+          resolveTokenProgram(connection, freshOffer.tokenA),
+          resolveTokenProgram(connection, freshOffer.tokenB),
         ]);
+        assertSameTokenProgram(tokenA.programId, tokenB.programId);
 
-        await assertSufficientTakerBalance(connection, publicKey, freshOffer, decimalsB);
+        await assertSufficientTakerBalance(connection, publicKey, freshOffer, tokenB.decimals, tokenB.programId);
 
-        const createsTakerTokenAccountA = await needsTakerTokenAccountA(connection, publicKey, freshOffer.tokenA);
+        const createsTakerTokenAccountA = await needsTakerTokenAccountA(
+          connection,
+          publicKey,
+          freshOffer.tokenA,
+          tokenA.programId
+        );
 
         await send(programState.program, async () => {
           const result = await buildTakeOfferTransaction({
             program: programState.program,
             taker: publicKey,
             offer: freshOffer,
+            tokenProgramA: tokenA.programId,
+            tokenProgramB: tokenB.programId,
             createsTakerTokenAccountA,
           });
           return result.transaction;

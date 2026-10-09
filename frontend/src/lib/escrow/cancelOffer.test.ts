@@ -1,13 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Connection } from "@solana/web3.js";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { WalletSignTransactionError } from "@solana/wallet-adapter-base";
 import { createEscrowProgram } from "@/lib/anchor/program";
-import { CreateOfferError, fetchMintDecimals } from "@/lib/escrow/createOffer";
+import { CreateOfferError } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
 import { GENERIC_ERROR_MESSAGE, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, associatedTokenAddress } from "@/lib/solana/ata";
 import { offerAddress } from "@/lib/solana/pda";
+import { TokenProgramError } from "@/lib/solana/tokenProgram";
 import {
   CancelOfferError,
   assertIsMaker,
@@ -56,19 +57,6 @@ describe("assertIsMaker", () => {
   });
 });
 
-describe("rejecting a Token-2022 mint (reusing the same check as Create/Take Offer)", () => {
-  it("never falls back to 0 decimals", async () => {
-    const data = Buffer.alloc(82);
-    const getAccountInfo = vi.fn().mockResolvedValue({ data, owner: TOKEN_2022_PROGRAM_ID });
-    const connection = { getAccountInfo } as unknown as Connection;
-
-    await expect(fetchMintDecimals(connection, MINT_A)).rejects.toThrow(CreateOfferError);
-    await expect(fetchMintDecimals(connection, MINT_A)).rejects.toThrow(
-      "This token type is not supported yet."
-    );
-  });
-});
-
 describe("buildCancelOfferTransaction", () => {
   function program() {
     const connection = {} as unknown as Connection;
@@ -79,25 +67,30 @@ describe("buildCancelOfferTransaction", () => {
     const p = program();
     const offer = makeOffer({ maker: MAKER }, p.programId);
 
-    await expect(buildCancelOfferTransaction({ program: p, maker: OTHER, offer })).rejects.toThrow(
-      "Only the person who made this offer can cancel it."
-    );
+    await expect(
+      buildCancelOfferTransaction({ program: p, maker: OTHER, offer, tokenProgram: TOKEN_PROGRAM_ID })
+    ).rejects.toThrow("Only the person who made this offer can cancel it.");
   });
 
   it("stops if the given offer address no longer matches the program's seeds (gone or already canceled)", async () => {
     const p = program();
     const offer = makeOffer({ offerAddress: Keypair.generate().publicKey }, p.programId);
 
-    await expect(buildCancelOfferTransaction({ program: p, maker: MAKER, offer })).rejects.toThrow(
-      "This offer is no longer available. It may have been taken or canceled."
-    );
+    await expect(
+      buildCancelOfferTransaction({ program: p, maker: MAKER, offer, tokenProgram: TOKEN_PROGRAM_ID })
+    ).rejects.toThrow("This offer is no longer available. It may have been taken or canceled.");
   });
 
   it("orders the cancel_offer accounts exactly as the IDL declares them", async () => {
     const p = program();
     const offer = makeOffer({}, p.programId);
 
-    const result = await buildCancelOfferTransaction({ program: p, maker: MAKER, offer });
+    const result = await buildCancelOfferTransaction({
+      program: p,
+      maker: MAKER,
+      offer,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    });
 
     expect(result.transaction.instructions).toHaveLength(1);
     const cancelIx = result.transaction.instructions[0];
@@ -107,8 +100,8 @@ describe("buildCancelOfferTransaction", () => {
       MAKER,
       offer.tokenA,
       offer.offerAddress,
-      associatedTokenAddress(offer.tokenA, MAKER),
-      associatedTokenAddress(offer.tokenA, offer.offerAddress),
+      associatedTokenAddress(offer.tokenA, MAKER, TOKEN_PROGRAM_ID),
+      associatedTokenAddress(offer.tokenA, offer.offerAddress, TOKEN_PROGRAM_ID),
       ASSOCIATED_TOKEN_PROGRAM_ID,
       TOKEN_PROGRAM_ID,
       SystemProgram.programId,
@@ -118,6 +111,24 @@ describe("buildCancelOfferTransaction", () => {
     cancelIx.keys.forEach((key, index) => {
       expect(key.pubkey.equals(expected[index])).toBe(true);
     });
+  });
+
+  it("uses the Token-2022 program throughout when the offer's token is Token-2022", async () => {
+    const p = program();
+    const offer = makeOffer({}, p.programId);
+
+    const result = await buildCancelOfferTransaction({
+      program: p,
+      maker: MAKER,
+      offer,
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+    });
+
+    const cancelIx = result.transaction.instructions[0];
+    expect(
+      cancelIx.keys[3].pubkey.equals(associatedTokenAddress(offer.tokenA, MAKER, TOKEN_2022_PROGRAM_ID))
+    ).toBe(true);
+    expect(cancelIx.keys[6].pubkey.equals(TOKEN_2022_PROGRAM_ID)).toBe(true);
   });
 });
 
@@ -129,9 +140,15 @@ describe("toCancelOfferFormMessage", () => {
   });
 
   it("passes through a reused CreateOfferError's own message unchanged", () => {
-    expect(toCancelOfferFormMessage(new CreateOfferError("This token type is not supported yet."))).toBe(
-      "This token type is not supported yet."
-    );
+    expect(
+      toCancelOfferFormMessage(new CreateOfferError("These two tokens can't be combined. Choose a different pair."))
+    ).toBe("These two tokens can't be combined. Choose a different pair.");
+  });
+
+  it("passes through a TokenProgramError's own message unchanged", () => {
+    expect(
+      toCancelOfferFormMessage(new TokenProgramError("This token can be frozen by its creator. It isn't supported here."))
+    ).toBe("This token can be frozen by its creator. It isn't supported here.");
   });
 
   it("never shows a raw error for an unexpected failure", () => {

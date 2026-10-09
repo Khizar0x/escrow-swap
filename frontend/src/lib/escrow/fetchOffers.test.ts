@@ -107,7 +107,7 @@ describe("fetchOfferTokenDecimals", () => {
     const getAccountInfo = vi
       .fn()
       .mockResolvedValueOnce(mintAccountInfo(TOKEN_PROGRAM_ID, 6))
-      .mockResolvedValueOnce(mintAccountInfo(TOKEN_2022_PROGRAM_ID, 0));
+      .mockResolvedValueOnce(mintAccountInfo(Keypair.generate().publicKey, 0));
     const connection = { getAccountInfo } as unknown as Connection;
 
     const offers: Offer[] = [
@@ -118,6 +118,23 @@ describe("fetchOfferTokenDecimals", () => {
 
     expect(result.decimals.has(MINT_B.toBase58())).toBe(false);
     expect(result.unavailable.has(MINT_B.toBase58())).toBe(true);
+  });
+
+  it("reads decimals for a plain Token-2022 token the same as a classic one", async () => {
+    const getAccountInfo = vi
+      .fn()
+      .mockResolvedValueOnce(mintAccountInfo(TOKEN_PROGRAM_ID, 6))
+      .mockResolvedValueOnce(mintAccountInfo(TOKEN_2022_PROGRAM_ID, 9));
+    const connection = { getAccountInfo } as unknown as Connection;
+
+    const offers: Offer[] = [
+      { offerAddress: Keypair.generate().publicKey, maker: MAKER, tokenA: MINT_A, tokenB: MINT_B, amountA: BigInt(1), amountB: BigInt(1), offerId: BigInt(1) },
+    ];
+
+    const result = await fetchOfferTokenDecimals(connection, offers);
+
+    expect(result.decimals.get(MINT_B.toBase58())).toBe(9);
+    expect(result.unavailable.has(MINT_B.toBase58())).toBe(false);
   });
 });
 

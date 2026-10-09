@@ -1,16 +1,16 @@
 import type { Program } from "@anchor-lang/core";
 import { type Connection, PublicKey, SystemProgram, type Transaction } from "@solana/web3.js";
-import { CreateOfferError, fetchTokenBalance } from "@/lib/escrow/createOffer";
+import { assertSameTokenProgram, CreateOfferError, fetchTokenBalance } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
 import { isUserRejection, toPlainErrorMessage, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import { fromBaseUnits } from "@/lib/solana/amounts";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
-  TOKEN_PROGRAM_ID,
   associatedTokenAddress,
   createAssociatedTokenAccountIdempotentInstruction,
 } from "@/lib/solana/ata";
 import { offerAddress as deriveOfferAddress } from "@/lib/solana/pda";
+import { TokenProgramError } from "@/lib/solana/tokenProgram";
 
 export class TakeOfferError extends Error {}
 
@@ -77,9 +77,10 @@ export async function assertSufficientTakerBalance(
   connection: Connection,
   taker: PublicKey,
   offer: Offer,
-  decimalsB: number
+  decimalsB: number,
+  tokenProgramB: PublicKey
 ): Promise<void> {
-  const balance = await fetchTokenBalance(connection, taker, offer.tokenB);
+  const balance = await fetchTokenBalance(connection, taker, offer.tokenB, tokenProgramB);
   if (balance < offer.amountB) {
     throw new TakeOfferError(
       `You need ${fromBaseUnits(offer.amountB, decimalsB)} of this token to take this offer, but you have ${fromBaseUnits(balance, decimalsB)}.`
@@ -92,9 +93,10 @@ export async function assertSufficientTakerBalance(
 export async function needsTakerTokenAccountA(
   connection: Connection,
   taker: PublicKey,
-  tokenA: PublicKey
+  tokenA: PublicKey,
+  tokenProgramA: PublicKey
 ): Promise<boolean> {
-  const info = await connection.getAccountInfo(associatedTokenAddress(tokenA, taker));
+  const info = await connection.getAccountInfo(associatedTokenAddress(tokenA, taker, tokenProgramA));
   return info === null;
 }
 
@@ -102,6 +104,8 @@ export interface BuildTakeOfferTransactionInput {
   program: Program;
   taker: PublicKey;
   offer: Offer;
+  tokenProgramA: PublicKey;
+  tokenProgramB: PublicKey;
   createsTakerTokenAccountA: boolean;
 }
 
@@ -112,27 +116,34 @@ export interface BuildTakeOfferTransactionResult {
 // Builds (but does not sign or send) the take_offer transaction. Every
 // account is derived here, never trusted from the caller, and the offer
 // address is checked against the program's seeds before it's used — the
-// same defense used when building the create-offer transaction.
+// same defense used when building the create-offer transaction. Both
+// tokens must share one token program (take_offer has exactly one
+// token-program account, used for every token account on both sides), so
+// an offer whose two tokens somehow don't agree is stopped here rather than
+// built into an instruction that could never succeed.
 export async function buildTakeOfferTransaction({
   program,
   taker,
   offer,
+  tokenProgramA,
+  tokenProgramB,
   createsTakerTokenAccountA,
 }: BuildTakeOfferTransactionInput): Promise<BuildTakeOfferTransactionResult> {
   assertNotOwnOffer(offer, taker);
+  assertSameTokenProgram(tokenProgramA, tokenProgramB);
 
   const expectedOfferAddress = deriveOfferAddress(program.programId, offer.maker, offer.offerId);
   if (!expectedOfferAddress.equals(offer.offerAddress)) {
     throw new TakeOfferError("This offer is no longer available. It may have been taken or canceled.");
   }
 
-  const vault = associatedTokenAddress(offer.tokenA, offer.offerAddress);
-  const takerTokenAccountA = associatedTokenAddress(offer.tokenA, taker);
-  const takerTokenAccountB = associatedTokenAddress(offer.tokenB, taker);
-  const makerTokenAccountB = associatedTokenAddress(offer.tokenB, offer.maker);
+  const vault = associatedTokenAddress(offer.tokenA, offer.offerAddress, tokenProgramA);
+  const takerTokenAccountA = associatedTokenAddress(offer.tokenA, taker, tokenProgramA);
+  const takerTokenAccountB = associatedTokenAddress(offer.tokenB, taker, tokenProgramB);
+  const makerTokenAccountB = associatedTokenAddress(offer.tokenB, offer.maker, tokenProgramB);
 
   const preInstructions = createsTakerTokenAccountA
-    ? [createAssociatedTokenAccountIdempotentInstruction(taker, taker, offer.tokenA)]
+    ? [createAssociatedTokenAccountIdempotentInstruction(taker, taker, offer.tokenA, tokenProgramA)]
     : [];
 
   const transaction = await program.methods
@@ -148,7 +159,7 @@ export async function buildTakeOfferTransaction({
       takerTokenAccountB,
       makerTokenAccountB,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: tokenProgramA,
       systemProgram: SystemProgram.programId,
     })
     .preInstructions(preInstructions)
@@ -162,7 +173,7 @@ export async function buildTakeOfferTransaction({
 // screen. TakeOfferError and the shared token-lookup errors are already
 // plain-language; anything else — including a bug — is never shown raw.
 export function toTakeOfferFormMessage(error: unknown): string {
-  if (error instanceof TakeOfferError || error instanceof CreateOfferError) {
+  if (error instanceof TakeOfferError || error instanceof CreateOfferError || error instanceof TokenProgramError) {
     return error.message;
   }
   if (isUserRejection(error)) {
