@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Connection } from "@solana/web3.js";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { WalletSignTransactionError } from "@solana/wallet-adapter-base";
 import { createEscrowProgram } from "@/lib/anchor/program";
 import { CreateOfferError, fetchMintDecimals } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
-import { GENERIC_ERROR_MESSAGE } from "@/lib/errors/map";
+import { GENERIC_ERROR_MESSAGE, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, associatedTokenAddress } from "@/lib/solana/ata";
 import { offerAddress } from "@/lib/solana/pda";
 import {
@@ -136,6 +137,12 @@ describe("toCancelOfferFormMessage", () => {
   it("never shows a raw error for an unexpected failure", () => {
     expect(toCancelOfferFormMessage(new TypeError("offerIdBytes.writeBigUInt64LE is not a function"))).toBe(
       GENERIC_ERROR_MESSAGE
+    );
+  });
+
+  it("maps a wallet rejection to the plain cancel message, not the generic one", () => {
+    expect(toCancelOfferFormMessage(new WalletSignTransactionError("User rejected the request."))).toBe(
+      USER_REJECTED_MESSAGE
     );
   });
 });

@@ -23,6 +23,7 @@ import {
 import { shortenAddress } from "@/lib/format/address";
 import { toBaseUnits } from "@/lib/solana/amounts";
 import { explorerAddressUrl, explorerTransactionUrl } from "@/lib/solana/explorer";
+import { createInFlightGuard } from "@/lib/tx/inFlightGuard";
 import { type SendState } from "@/lib/tx/useSendTransaction";
 import { type TransactionStatus } from "@/lib/tx/sendTransaction";
 import { useSendTransaction } from "@/lib/tx/useSendTransaction";
@@ -41,12 +42,17 @@ export function CreateOfferForm() {
   const [banner, dispatchBanner] = useReducer(reduceCreateOfferBanner, null);
   const pendingOfferAddressRef = useRef<PublicKey | null>(null);
   const prevStatusRef = useRef<SendState["status"]>("idle");
+  // A synchronous guard against a double-submit, on top of useSendTransaction's
+  // own guard — this one also stops the pre-send checks below (fetching
+  // decimals, checking balance, picking an offer ID) from running twice.
+  const guardRef = useRef(createInFlightGuard());
 
-  // Reacts to the transaction's own terminal states (not wallet rejection,
-  // which useSendTransaction already resets to idle quietly). The offer
-  // address is read from a ref rather than component state, since it's
-  // produced mid-build, inside the same submit that this effect reacts to
-  // after the fact.
+  // Reacts to the transaction's own terminal states, including a wallet
+  // rejection — useSendTransaction surfaces that as "error" too, with its
+  // own calm message, rather than resetting quietly. The offer address is
+  // read from a ref rather than component state, since it's produced
+  // mid-build, inside the same submit that this effect reacts to after the
+  // fact.
   useEffect(() => {
     const prev = prevStatusRef.current;
     prevStatusRef.current = state.status;
@@ -80,62 +86,70 @@ export function CreateOfferForm() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    dispatchBanner({ type: "submit-started" });
-    reset();
+    await guardRef.current(async () => {
+      dispatchBanner({ type: "submit-started" });
+      reset();
 
-    if (programState.status !== "ready" || !publicKey) {
-      return;
-    }
-    if (networkBlocked) {
-      dispatchBanner({
-        type: "submit-result",
-        result: { type: "error", message: "Switch to Solana Devnet to continue." },
-      });
-      return;
-    }
-
-    let mintA: PublicKey;
-    let mintB: PublicKey;
-    try {
-      mintA = new PublicKey(fields.giveMint.trim());
-      mintB = new PublicKey(fields.wantMint.trim());
-    } catch {
-      dispatchBanner({ type: "submit-result", result: { type: "error", message: "Enter valid token addresses." } });
-      return;
-    }
-
-    try {
-      assertDistinctMints(mintA, mintB);
-
-      const [decimalsA, decimalsB] = await Promise.all([
-        fetchMintDecimals(connection, mintA),
-        fetchMintDecimals(connection, mintB),
-      ]);
-
-      const amountA = toBaseUnits(fields.giveAmount, decimalsA);
-      const amountB = toBaseUnits(fields.wantAmount, decimalsB);
-
-      const balance = await fetchTokenBalance(connection, publicKey, mintA);
-      assertSufficientBalance(amountA, balance);
-
-      const offerId = await pickOfferId(connection, programState.program.programId, publicKey);
-
-      await send(programState.program, async () => {
-        const result = await buildCreateOfferTransaction({
-          program: programState.program,
-          maker: publicKey,
-          mintA,
-          mintB,
-          amountA,
-          amountB,
-          offerId,
+      if (programState.status !== "ready" || !publicKey) {
+        return;
+      }
+      if (networkBlocked) {
+        dispatchBanner({
+          type: "submit-result",
+          result: { type: "error", message: "Switch to Solana Devnet to continue." },
         });
-        pendingOfferAddressRef.current = result.offerAddress;
-        return result.transaction;
-      });
-    } catch (error) {
-      dispatchBanner({ type: "submit-result", result: { type: "error", message: toCreateOfferFormMessage(error) } });
-    }
+        return;
+      }
+
+      let mintA: PublicKey;
+      let mintB: PublicKey;
+      try {
+        mintA = new PublicKey(fields.giveMint.trim());
+        mintB = new PublicKey(fields.wantMint.trim());
+      } catch {
+        dispatchBanner({
+          type: "submit-result",
+          result: { type: "error", message: "Enter valid token addresses." },
+        });
+        return;
+      }
+
+      try {
+        assertDistinctMints(mintA, mintB);
+
+        const [decimalsA, decimalsB] = await Promise.all([
+          fetchMintDecimals(connection, mintA),
+          fetchMintDecimals(connection, mintB),
+        ]);
+
+        const amountA = toBaseUnits(fields.giveAmount, decimalsA);
+        const amountB = toBaseUnits(fields.wantAmount, decimalsB);
+
+        const balance = await fetchTokenBalance(connection, publicKey, mintA);
+        assertSufficientBalance(amountA, balance);
+
+        const offerId = await pickOfferId(connection, programState.program.programId, publicKey);
+
+        await send(programState.program, async () => {
+          const result = await buildCreateOfferTransaction({
+            program: programState.program,
+            maker: publicKey,
+            mintA,
+            mintB,
+            amountA,
+            amountB,
+            offerId,
+          });
+          pendingOfferAddressRef.current = result.offerAddress;
+          return result.transaction;
+        });
+      } catch (error) {
+        dispatchBanner({
+          type: "submit-result",
+          result: { type: "error", message: toCreateOfferFormMessage(error) },
+        });
+      }
+    });
   }
 
   return (

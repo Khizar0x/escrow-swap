@@ -18,6 +18,7 @@ import {
   toTakeOfferFormMessage,
 } from "@/lib/escrow/takeOffer";
 import { shortenAddress } from "@/lib/format/address";
+import { createInFlightGuard } from "@/lib/tx/inFlightGuard";
 import { type SendState } from "@/lib/tx/useSendTransaction";
 import { type TransactionStatus } from "@/lib/tx/sendTransaction";
 import { useSendTransaction } from "@/lib/tx/useSendTransaction";
@@ -50,6 +51,10 @@ export function TakeOfferAction({
   const [panelOpen, setPanelOpen] = useState(false);
   const [willCreateAccount, setWillCreateAccount] = useState<boolean | null>(null);
   const prevStatusRef = useRef<SendState["status"]>("idle");
+  // A synchronous guard against a double-click on Confirm, on top of
+  // useSendTransaction's own guard — this one also stops the pre-send checks
+  // below (re-fetching the offer, checking balance) from running twice.
+  const guardRef = useRef(createInFlightGuard());
 
   useEffect(() => {
     const prev = prevStatusRef.current;
@@ -101,40 +106,42 @@ export function TakeOfferAction({
   }
 
   async function handleConfirm() {
-    if (programState.status !== "ready" || !publicKey) {
-      return;
-    }
-    onResult(null);
-    try {
-      const freshOffer = await fetchFreshOffer(programState.program, offer.offerAddress);
-      assertNotOwnOffer(freshOffer, publicKey);
+    await guardRef.current(async () => {
+      if (programState.status !== "ready" || !publicKey) {
+        return;
+      }
+      onResult(null);
+      try {
+        const freshOffer = await fetchFreshOffer(programState.program, offer.offerAddress);
+        assertNotOwnOffer(freshOffer, publicKey);
 
-      // Both tokens must be classic tokens; fetchMintDecimals rejects
-      // Token-2022 (and anything else that isn't a classic mint) with a
-      // plain message. Only token B's decimals are needed past this point,
-      // to show the balance check's amounts in plain decimals.
-      const [, decimalsB] = await Promise.all([
-        fetchMintDecimals(connection, freshOffer.tokenA),
-        fetchMintDecimals(connection, freshOffer.tokenB),
-      ]);
+        // Both tokens must be classic tokens; fetchMintDecimals rejects
+        // Token-2022 (and anything else that isn't a classic mint) with a
+        // plain message. Only token B's decimals are needed past this point,
+        // to show the balance check's amounts in plain decimals.
+        const [, decimalsB] = await Promise.all([
+          fetchMintDecimals(connection, freshOffer.tokenA),
+          fetchMintDecimals(connection, freshOffer.tokenB),
+        ]);
 
-      await assertSufficientTakerBalance(connection, publicKey, freshOffer, decimalsB);
+        await assertSufficientTakerBalance(connection, publicKey, freshOffer, decimalsB);
 
-      const createsTakerTokenAccountA = await needsTakerTokenAccountA(connection, publicKey, freshOffer.tokenA);
+        const createsTakerTokenAccountA = await needsTakerTokenAccountA(connection, publicKey, freshOffer.tokenA);
 
-      await send(programState.program, async () => {
-        const result = await buildTakeOfferTransaction({
-          program: programState.program,
-          taker: publicKey,
-          offer: freshOffer,
-          createsTakerTokenAccountA,
+        await send(programState.program, async () => {
+          const result = await buildTakeOfferTransaction({
+            program: programState.program,
+            taker: publicKey,
+            offer: freshOffer,
+            createsTakerTokenAccountA,
+          });
+          return result.transaction;
         });
-        return result.transaction;
-      });
-    } catch (error) {
-      onResult({ type: "error", message: toTakeOfferFormMessage(error) });
-      setPanelOpen(false);
-    }
+      } catch (error) {
+        onResult({ type: "error", message: toTakeOfferFormMessage(error) });
+        setPanelOpen(false);
+      }
+    });
   }
 
   if (!panelOpen) {

@@ -16,6 +16,7 @@ import {
 import { fetchMintDecimals } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
 import { shortenAddress } from "@/lib/format/address";
+import { createInFlightGuard } from "@/lib/tx/inFlightGuard";
 import { type SendState } from "@/lib/tx/useSendTransaction";
 import { type TransactionStatus } from "@/lib/tx/sendTransaction";
 import { useSendTransaction } from "@/lib/tx/useSendTransaction";
@@ -47,6 +48,11 @@ export function CancelOfferAction({
 
   const [panelOpen, setPanelOpen] = useState(false);
   const prevStatusRef = useRef<SendState["status"]>("idle");
+  // A synchronous guard against a double-click on Confirm, on top of
+  // useSendTransaction's own guard — this one also stops the pre-send checks
+  // below (re-fetching the offer, checking who the maker is) from running
+  // twice.
+  const guardRef = useRef(createInFlightGuard());
 
   useEffect(() => {
     const prev = prevStatusRef.current;
@@ -91,30 +97,32 @@ export function CancelOfferAction({
   }
 
   async function handleConfirm() {
-    if (programState.status !== "ready" || !publicKey) {
-      return;
-    }
-    onResult(null);
-    try {
-      const freshOffer = await fetchFreshOffer(programState.program, offer.offerAddress);
-      assertIsMaker(freshOffer, publicKey);
+    await guardRef.current(async () => {
+      if (programState.status !== "ready" || !publicKey) {
+        return;
+      }
+      onResult(null);
+      try {
+        const freshOffer = await fetchFreshOffer(programState.program, offer.offerAddress);
+        assertIsMaker(freshOffer, publicKey);
 
-      // Classic tokens only; fetchMintDecimals rejects Token-2022 with a
-      // plain message and never falls back to 0 decimals.
-      await fetchMintDecimals(connection, freshOffer.tokenA);
+        // Classic tokens only; fetchMintDecimals rejects Token-2022 with a
+        // plain message and never falls back to 0 decimals.
+        await fetchMintDecimals(connection, freshOffer.tokenA);
 
-      await send(programState.program, async () => {
-        const result = await buildCancelOfferTransaction({
-          program: programState.program,
-          maker: publicKey,
-          offer: freshOffer,
+        await send(programState.program, async () => {
+          const result = await buildCancelOfferTransaction({
+            program: programState.program,
+            maker: publicKey,
+            offer: freshOffer,
+          });
+          return result.transaction;
         });
-        return result.transaction;
-      });
-    } catch (error) {
-      onResult({ type: "error", message: toCancelOfferFormMessage(error) });
-      setPanelOpen(false);
-    }
+      } catch (error) {
+        onResult({ type: "error", message: toCancelOfferFormMessage(error) });
+        setPanelOpen(false);
+      }
+    });
   }
 
   if (!panelOpen) {

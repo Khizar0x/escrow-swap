@@ -2,7 +2,7 @@ import type { Program } from "@anchor-lang/core";
 import { type Connection, PublicKey, SystemProgram, type Transaction } from "@solana/web3.js";
 import { CreateOfferError, fetchTokenBalance } from "@/lib/escrow/createOffer";
 import type { Offer } from "@/lib/escrow/fetchOffers";
-import { toPlainErrorMessage } from "@/lib/errors/map";
+import { isUserRejection, toPlainErrorMessage, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import { fromBaseUnits } from "@/lib/solana/amounts";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -164,6 +164,9 @@ export async function buildTakeOfferTransaction({
 export function toTakeOfferFormMessage(error: unknown): string {
   if (error instanceof TakeOfferError || error instanceof CreateOfferError) {
     return error.message;
+  }
+  if (isUserRejection(error)) {
+    return USER_REJECTED_MESSAGE;
   }
   return toPlainErrorMessage(error);
 }

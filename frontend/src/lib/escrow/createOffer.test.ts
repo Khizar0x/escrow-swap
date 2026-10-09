@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Connection } from "@solana/web3.js";
 import { Connection as RealConnection, Keypair, PublicKey } from "@solana/web3.js";
+import { WalletSignTransactionError } from "@solana/wallet-adapter-base";
 import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@/lib/solana/ata";
 import { AmountError } from "@/lib/solana/amounts";
 import { offerAddress } from "@/lib/solana/pda";
 import { createEscrowProgram } from "@/lib/anchor/program";
-import { GENERIC_ERROR_MESSAGE } from "@/lib/errors/map";
+import { GENERIC_ERROR_MESSAGE, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import {
   CreateOfferError,
   assertDistinctMints,
@@ -205,5 +206,11 @@ describe("toCreateOfferFormMessage", () => {
 
   it("never shows a raw error for an unexpected plain Error", () => {
     expect(toCreateOfferFormMessage(new Error("boom"))).toBe(GENERIC_ERROR_MESSAGE);
+  });
+
+  it("maps a wallet rejection to the plain create message, not the generic one", () => {
+    expect(toCreateOfferFormMessage(new WalletSignTransactionError("User rejected the request."))).toBe(
+      USER_REJECTED_MESSAGE
+    );
   });
 });

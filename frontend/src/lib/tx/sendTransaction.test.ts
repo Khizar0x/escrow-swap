@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  TransactionExpiredBlockheightExceededError,
+} from "@solana/web3.js";
 import { createEscrowProgram } from "@/lib/anchor/program";
-import { GENERIC_ERROR_MESSAGE } from "@/lib/errors/map";
+import { EXPIRED_REQUEST_MESSAGE, GENERIC_ERROR_MESSAGE, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import { QuietRejection, sendAndConfirmTransaction } from "./sendTransaction";
 
 function testProgram() {
@@ -49,7 +54,7 @@ describe("sendAndConfirmTransaction", () => {
     expect(statuses).toEqual(["awaiting-approval", "sending", "confirming"]);
   });
 
-  it("throws QuietRejection when the wallet declines to sign", async () => {
+  it("throws QuietRejection with the plain cancel message when the wallet declines to sign", async () => {
     const program = testProgram();
     const connection = {
       getLatestBlockhash: vi
@@ -62,15 +67,16 @@ describe("sendAndConfirmTransaction", () => {
       signTransaction: vi.fn().mockRejectedValue(new Error("User rejected the request.")),
     };
 
-    await expect(
-      sendAndConfirmTransaction({
-        connection,
-        wallet: wallet as never,
-        program,
-        buildTransaction: async () => fakeTransaction(),
-        onStatus: () => {},
-      })
-    ).rejects.toThrow(QuietRejection);
+    const call = sendAndConfirmTransaction({
+      connection,
+      wallet: wallet as never,
+      program,
+      buildTransaction: async () => fakeTransaction(),
+      onStatus: () => {},
+    });
+
+    await expect(call).rejects.toThrow(QuietRejection);
+    await expect(call).rejects.toThrow(USER_REJECTED_MESSAGE);
   });
 
   it("maps a confirmed-but-failed transaction to its plain program-error message", async () => {
@@ -133,5 +139,121 @@ describe("sendAndConfirmTransaction", () => {
         onStatus: () => {},
       })
     ).rejects.toThrow(GENERIC_ERROR_MESSAGE);
+  });
+
+  describe("when the blockhash expires before confirmation (a slow approval)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    it("maps it to the plain expiry message when the transaction never landed", async () => {
+      const program = testProgram();
+      const connection = {
+        getLatestBlockhash: vi
+          .fn()
+          .mockResolvedValue({ blockhash: "hash", lastValidBlockHeight: 1 }),
+        sendRawTransaction: vi.fn().mockResolvedValue("SIG123"),
+        confirmTransaction: vi
+          .fn()
+          .mockRejectedValue(new TransactionExpiredBlockheightExceededError("SIG123")),
+        getSignatureStatus: vi.fn().mockResolvedValue({ value: null }),
+      } as unknown as Connection;
+
+      const wallet = {
+        publicKey: new PublicKey("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"),
+        signTransaction: vi.fn().mockResolvedValue({ serialize: () => Buffer.from("signed") }),
+      };
+
+      await expect(
+        sendAndConfirmTransaction({
+          connection,
+          wallet: wallet as never,
+          program,
+          buildTransaction: async () => fakeTransaction(),
+          onStatus: () => {},
+        })
+      ).rejects.toThrow(EXPIRED_REQUEST_MESSAGE);
+
+      expect(connection.getSignatureStatus).toHaveBeenCalledWith("SIG123");
+    });
+
+    it("returns the signature instead of an error when the transaction landed anyway", async () => {
+      const program = testProgram();
+      const connection = {
+        getLatestBlockhash: vi
+          .fn()
+          .mockResolvedValue({ blockhash: "hash", lastValidBlockHeight: 1 }),
+        sendRawTransaction: vi.fn().mockResolvedValue("SIG123"),
+        confirmTransaction: vi
+          .fn()
+          .mockRejectedValue(new TransactionExpiredBlockheightExceededError("SIG123")),
+        getSignatureStatus: vi.fn().mockResolvedValue({ value: { err: null, confirmationStatus: "confirmed" } }),
+      } as unknown as Connection;
+
+      const wallet = {
+        publicKey: new PublicKey("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"),
+        signTransaction: vi.fn().mockResolvedValue({ serialize: () => Buffer.from("signed") }),
+      };
+
+      const signature = await sendAndConfirmTransaction({
+        connection,
+        wallet: wallet as never,
+        program,
+        buildTransaction: async () => fakeTransaction(),
+        onStatus: () => {},
+      });
+
+      expect(signature).toBe("SIG123");
+    });
+
+    it("logs the real error's name and message once, in development only", async () => {
+      const program = testProgram();
+      const connection = {
+        getLatestBlockhash: vi
+          .fn()
+          .mockResolvedValue({ blockhash: "hash", lastValidBlockHeight: 1 }),
+        sendRawTransaction: vi.fn().mockResolvedValue("SIG123"),
+        confirmTransaction: vi
+          .fn()
+          .mockRejectedValue(new TransactionExpiredBlockheightExceededError("SIG123")),
+        getSignatureStatus: vi.fn().mockResolvedValue({ value: null }),
+      } as unknown as Connection;
+
+      const wallet = {
+        publicKey: new PublicKey("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"),
+        signTransaction: vi.fn().mockResolvedValue({ serialize: () => Buffer.from("signed") }),
+      };
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      // Not in development: no console output at all.
+      await expect(
+        sendAndConfirmTransaction({
+          connection,
+          wallet: wallet as never,
+          program,
+          buildTransaction: async () => fakeTransaction(),
+          onStatus: () => {},
+        })
+      ).rejects.toThrow(EXPIRED_REQUEST_MESSAGE);
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      // In development: logged exactly once, with the real error's name and message.
+      vi.stubEnv("NODE_ENV", "development");
+      await expect(
+        sendAndConfirmTransaction({
+          connection,
+          wallet: wallet as never,
+          program,
+          buildTransaction: async () => fakeTransaction(),
+          onStatus: () => {},
+        })
+      ).rejects.toThrow(EXPIRED_REQUEST_MESSAGE);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toContain("TransactionExpiredBlockheightExceededError");
+      expect(warnSpy.mock.calls[0][0]).toContain("SIG123");
+    });
   });
 });

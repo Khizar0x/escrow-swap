@@ -1,5 +1,9 @@
 import { AnchorError, ProgramError } from "@anchor-lang/core";
 import { WalletSendTransactionError, WalletSignTransactionError } from "@solana/wallet-adapter-base";
+import {
+  TransactionExpiredBlockheightExceededError,
+  TransactionExpiredTimeoutError,
+} from "@solana/web3.js";
 import escrowIdl from "@/idl/escrow.json";
 
 // Plain-language text for each program error, keyed by the IDL's error name
@@ -35,13 +39,96 @@ export function toPlainErrorMessage(error: unknown): string {
   return GENERIC_ERROR_MESSAGE;
 }
 
+export const USER_REJECTED_MESSAGE = "You canceled the request in your wallet. Nothing was sent.";
+
+const REJECTION_ERROR_NAMES = new Set(["WalletSignTransactionError", "WalletSendTransactionError"]);
+
+// Phantom, and most other wallets that follow the same convention, reject
+// with this code (sometimes on the error itself, sometimes nested under
+// .error or .cause, depending on how the adapter wraps the provider's own
+// error) when the person declines in the approval popup.
+const WALLET_USER_REJECTED_CODE = 4001;
+
+function hasUserRejectedCode(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  if ((value as { code?: unknown }).code === WALLET_USER_REJECTED_CODE) {
+    return true;
+  }
+  const nested = (value as { error?: unknown }).error ?? (value as { cause?: unknown }).cause;
+  return (
+    typeof nested === "object" &&
+    nested !== null &&
+    (nested as { code?: unknown }).code === WALLET_USER_REJECTED_CODE
+  );
+}
+
 // True when the wallet, not the program, is why a transaction did not go
-// through — e.g. the person closed the approval popup. Callers should treat
-// this as a silent cancel, not an error to show.
+// through — e.g. the person closed the approval popup. Checks the wrapper
+// class the wallet-adapter library throws, its .name (for an error that
+// looks the same but isn't literally that class), Phantom's numeric
+// rejection code (direct or nested under .error/.cause), and finally the
+// message text itself, since not every wallet wraps its errors the same
+// way. Callers should show a calm, specific message for this — never log it
+// to the console — rather than treat it like an unexpected failure.
 export function isUserRejection(error: unknown): boolean {
   if (error instanceof WalletSignTransactionError || error instanceof WalletSendTransactionError) {
     return true;
   }
+  if (error instanceof Error && REJECTION_ERROR_NAMES.has(error.name)) {
+    return true;
+  }
+  if (hasUserRejectedCode(error)) {
+    return true;
+  }
   const message = error instanceof Error ? error.message : String(error);
   return /reject|declin|cancel/i.test(message);
+}
+
+export const EXPIRED_REQUEST_MESSAGE =
+  "The request expired before it was approved. Nothing was sent. Please try again.";
+
+const EXPIRED_ERROR_NAMES = new Set([
+  "TransactionExpiredBlockheightExceededError",
+  "TransactionExpiredTimeoutError",
+]);
+
+// True when the network says a transaction's blockhash expired, or
+// confirmation never finished, before it could be approved and landed —
+// e.g. the person took a long time to approve in their wallet. This is not
+// a rejection and not a program error: nothing is known to have failed,
+// only that the wallet took too long to come back. web3.js's own
+// confirmTransaction already uses lastValidBlockHeight internally to
+// detect this (that's what TransactionExpiredBlockheightExceededError
+// means), so this mainly needs to recognize its two expiry error classes
+// and, as a fallback, the RPC's own "blockhash not found" wording for a
+// blockhash that was already stale by the time it was sent.
+export function isExpiredRequestError(error: unknown): boolean {
+  if (
+    error instanceof TransactionExpiredBlockheightExceededError ||
+    error instanceof TransactionExpiredTimeoutError
+  ) {
+    return true;
+  }
+  if (error instanceof Error) {
+    if (EXPIRED_ERROR_NAMES.has(error.name)) {
+      return true;
+    }
+    return /blockhash not found|block height exceeded|not confirmed in/i.test(error.message);
+  }
+  return false;
+}
+
+// Both TransactionExpired* classes carry the signature of the transaction
+// that expired unconfirmed. Lets the caller check whether it landed anyway
+// before showing an error.
+export function expiredSignature(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "signature" in error) {
+    const value = (error as { signature?: unknown }).signature;
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return undefined;
 }

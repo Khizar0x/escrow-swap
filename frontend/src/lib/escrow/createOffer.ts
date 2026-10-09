@@ -1,6 +1,6 @@
 import { BN, type Program } from "@anchor-lang/core";
 import { type Connection, PublicKey, SystemProgram, type Transaction } from "@solana/web3.js";
-import { toPlainErrorMessage } from "@/lib/errors/map";
+import { isUserRejection, toPlainErrorMessage, USER_REJECTED_MESSAGE } from "@/lib/errors/map";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
@@ -150,6 +150,9 @@ export async function buildCreateOfferTransaction({
 export function toCreateOfferFormMessage(error: unknown): string {
   if (error instanceof AmountError || error instanceof CreateOfferError) {
     return error.message;
+  }
+  if (isUserRejection(error)) {
+    return USER_REJECTED_MESSAGE;
   }
   return toPlainErrorMessage(error);
 }
