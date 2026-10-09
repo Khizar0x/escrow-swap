@@ -32,6 +32,7 @@ Rebuild the escrow frontend from scratch in a new `frontend/` folder, following 
 
    Re-check in Phase 10.
 4. **The Anchor TypeScript client is `@anchor-lang/core` 1.2.0, pinned exactly (no caret) in `package.json`.** The program and the Anchor CLI are both Anchor 1.x, so the client should be from the same line. This package also depends on `@solana/web3.js` 1.x, which the wallet packages use. The smoke test passed: the IDL loads, the program client builds with the program ID from the IDL, and an `Offer` round-trips through the coder with every field intact. Fallback if this fails later: `@coral-xyz/anchor` 0.32.1, which the root test suite already uses successfully with this IDL.
+5. **`@anchor-lang/core`'s npm audit "high" finding (via `toml`) is accepted.** The flagged code is `workspace.js`, a Node-only module that reads `Anchor.toml` from disk — not anything the frontend calls. Confirmed absent from the production bundle by searching the built output (`.next/static/chunks/*.js`) for `toml`/`resolveIdlFileName`: zero matches. See `SECURITY_REVIEW_FRONTEND.md` area 7 for the full trace. No fix is offered (`fixAvailable` requires a semver-major bump to a non-existent version).
 
 ## Findings in `app/` (reference only, not to be fixed there)
 

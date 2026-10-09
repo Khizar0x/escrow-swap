@@ -1,78 +1,50 @@
 # Escrow Swap
 
-An Anchor program for peer-to-peer SPL token swaps on Solana, plus a Next.js frontend for it. A maker locks up tokens in an escrow; anyone can take the offer, or the maker can cancel and get their tokens back.
+Swap tokens with other people, with nothing changing hands until both sides agree. Create an offer saying what you'll give and what you want back; anyone can take it, or you can cancel it yourself and get your tokens back.
 
-**Live demo (devnet):** https://escrow-swap.vercel.app
-**Program (devnet):** [`WGR3TkneAhURGhPTLqS1TKejNWDQYAQu3QaMDiF4i5b`](https://explorer.solana.com/address/WGR3TkneAhURGhPTLqS1TKejNWDQYAQu3QaMDiF4i5b?cluster=devnet)
+This app runs on Solana Devnet only. It isn't connected to real money, and it hasn't been reviewed for production use.
 
-> Devnet only, unaudited. Don't point this at mainnet without a proper review.
+**Program:** [`WGR3TkneAhURGhPTLqS1TKejNWDQYAQu3QaMDiF4i5b`](https://explorer.solana.com/address/WGR3TkneAhURGhPTLqS1TKejNWDQYAQu3QaMDiF4i5b?cluster=devnet) (Devnet)
 
-## How it works
+## Supported tokens
 
-The maker deposits Token A into a vault and says how much Token B they want back. That vault is a token account owned by the offer's own PDA, not by a person — so the only way tokens leave it is through this program's own instructions.
+Classic tokens work, and so do newer-standard ("Token-2022") tokens — as long as they don't carry a feature this app can't safely support. A token is blocked if it:
 
-| Instruction | Caller | What it does |
-|---|---|---|
-| `make_offer` | Maker | Deposits Token A into the vault, records the terms on-chain. |
-| `take_offer` | Anyone | Pays the maker in Token B and receives Token A from the vault, in one transaction. Offer and vault both close afterward, rent goes back to the maker. |
-| `cancel_offer` | Maker only | Refunds the vault to the maker and closes the offer. Nobody else can call this on your offer. |
+- **Takes a fee on every transfer** — the amount that arrives wouldn't match what was offered.
+- **Lets someone else move tokens out of your account** — that works against the whole point of this app.
+- **Runs extra code on every transfer** — there's no way to know in advance what that code does.
+- **Can be closed by its creator** — it could stop existing while someone's still relying on it.
+- **Starts new accounts out frozen** — unusable from the moment you'd receive it.
+- **Can be frozen by its creator** — yours could get frozen in the middle of a swap.
+- **Has any other feature this app doesn't recognize yet** — blocked by default rather than risking something unknown.
 
-Since `take_offer` and `cancel_offer` close the accounts when they're done, there's no on-chain record of past offers once they're settled. The "My Offers" page in the frontend only shows what's currently open for that reason — it's not trying to show history it doesn't have.
+A token with none of the above, classic or newer-standard, works normally.
 
-## Repo layout
-
-```
-programs/escrow/       The Anchor program (make_offer, take_offer, cancel_offer)
-programs/escrow/tests/ Rust unit tests (litesvm, no validator needed)
-tests/                 TypeScript tests against a local validator
-app/                   Next.js frontend
-```
-
-## Setup
-
-### You'll need
-- Rust, per `rust-toolchain.toml`
-- Solana CLI + `anchor-cli` 1.1.2 (`avm install 1.1.2 && avm use 1.1.2`)
-- Node 20+
-
-### Program
+## Running it
 
 ```bash
-anchor build
-anchor deploy --provider.cluster devnet   # or localnet, see Anchor.toml
-```
-
-### Tests
-
-```bash
-cargo test                 # Rust unit tests, no validator needed
-
-npm install                # TS tests — need a local validator running
-solana-test-validator --reset --quiet &
-npm test
-```
-
-If `solana-test-validator` crashes with an `io_uring_supported()` panic (happens on some older WSL2 kernels), use an older installed release instead, e.g. `~/.local/share/solana/install/releases/2.1.21/solana-release/bin/solana-test-validator`.
-
-### Frontend
-
-```bash
-cd app
+cd frontend
 npm install
-cp .env.example .env.local   # set NEXT_PUBLIC_RPC_URL
+cp .env.example .env.local
 npm run dev
 ```
 
-Then open `http://localhost:3000` and connect a devnet wallet. The IDL and types under `app/src/lib/anchor/` are just copies of `target/idl/` and `target/types/` — re-copy them after rebuilding the program.
+Then open the address it prints (`http://localhost:3000` by default) and connect a Devnet wallet.
 
-The public `api.devnet.solana.com` endpoint is shared and gets rate-limited, so you'll sometimes see "blockhash not found" errors under load (the frontend retries once automatically, but a free key from Helius, QuickNode, or Triton is more reliable).
+## Running tests
 
-## Deployment
+```bash
+npm test
+npm run typecheck
+```
 
-`app/` is deployed on Vercel, connected to this repo's `master` branch — pushes deploy automatically. `NEXT_PUBLIC_RPC_URL` is set directly in Vercel, not in the repo.
+## Testing on devnet
 
-## What's missing on purpose
+You'll need two wallets — one to create an offer, a different one to take it, since you can't take your own offer — and a little of two different test tokens on Devnet in each wallet. To just check the cancel path, one wallet and one test token is enough.
 
-- No history of past offers (accounts close on completion — a real product would want an indexer for this).
-- No taker allowlisting, partial fills, or fees — just make/take/cancel.
-- No price oracle. Rates are whatever the maker sets, and the UI doesn't show USD values or price impact it can't actually back up.
+## More detail
+
+- [`PLAN.md`](PLAN.md) — the build plan and the decisions made along the way.
+- [`SECURITY_REVIEW_FRONTEND.md`](SECURITY_REVIEW_FRONTEND.md) — a security review of the frontend.
+- [`IDL_CHECK_REPORT.md`](IDL_CHECK_REPORT.md) — comparing what the frontend expects against what's actually deployed.
+- [`PHASE11A_REPORT.md`](PHASE11A_REPORT.md) — how the newer-standard token support above was built and verified.
