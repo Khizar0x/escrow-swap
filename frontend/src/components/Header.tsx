@@ -3,13 +3,14 @@ import { NavPills } from "@/components/NavPills";
 import { WalletButton } from "@/components/WalletButton";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { LogoMark } from "@/components/ui/LogoMark";
+import { PAGE_CONTAINER } from "@/lib/ui/container";
 
 // The top bar. Its inner width matches the page content, so both share the same left edge.
 // On phones, the navigation drops to a full-width row under the logo and the buttons.
 export function Header() {
   return (
     <header className="border-b border-border bg-surface">
-      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-4 sm:px-6">
+      <div className={`${PAGE_CONTAINER} flex flex-wrap items-center gap-x-6 gap-y-3 py-4`}>
         <Link
           href="/"
           aria-label="Escrow Swap, go to the marketplace"

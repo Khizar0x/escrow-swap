@@ -27,13 +27,15 @@ export function Hero() {
         </p>
       </div>
 
-      {/* Hidden once a wallet is connected. The Create Offer button comes with Phase 5. */}
+      {/* Hidden once a wallet is connected. The Create Offer button comes with Phase 5.
+          md:ml-auto pins it to the row's right edge, the same edge the connected wallet
+          pill sits at in the header, so nothing shifts horizontally on connect. */}
       {!connected && (
         <Button
           size="lg"
           onClick={() => setVisible(true)}
           disabled={connecting}
-          className="md:shrink-0"
+          className="md:ml-auto md:shrink-0"
         >
           {connecting ? "Connecting…" : "Connect Wallet"}
           {!connecting && <ArrowRightIcon />}

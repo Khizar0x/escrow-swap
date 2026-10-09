@@ -137,3 +137,71 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Theme the wallet-adapter library's own "Connect a wallet" popup with our
+   design tokens, instead of its default styling. These are the library's own
+   class names (see @solana/wallet-adapter-react-ui/styles.css) — the library
+   itself is never forked or copied, only overridden. Everything below reads
+   from the same custom properties the rest of the app uses, so it follows
+   dark/light automatically with no separate light-mode block. */
+.wallet-adapter-modal-wrapper {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  box-shadow: var(--card-shadow);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  color: var(--ink);
+}
+
+.wallet-adapter-modal-title {
+  color: var(--ink);
+  font-family: inherit;
+}
+
+.wallet-adapter-modal-button-close {
+  background: var(--raised);
+  border: 1px solid var(--border);
+}
+
+.wallet-adapter-modal-button-close svg {
+  fill: var(--muted);
+}
+
+.wallet-adapter-modal-button-close:hover svg {
+  fill: var(--ink);
+}
+
+.wallet-adapter-modal-button-close:focus-visible {
+  outline-color: var(--focus);
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button {
+  color: var(--ink);
+  font-family: inherit;
+  border-radius: var(--radius-control);
+}
+
+.wallet-adapter-button:not([disabled]):hover {
+  background-color: var(--raised);
+}
+
+.wallet-adapter-button:not([disabled]):focus-visible {
+  outline-color: var(--focus);
+}
+
+.wallet-adapter-button[disabled] {
+  background: var(--raised);
+  color: var(--muted);
+}
+
+.wallet-adapter-modal-list-more {
+  color: var(--muted);
+}
+
+.wallet-adapter-modal-list-more:hover {
+  color: var(--ink);
+}
+
+.wallet-adapter-modal-list-more svg {
+  fill: var(--muted);
+}

@@ -1,5 +1,6 @@
 import { escrowIdl } from "@/lib/anchor/program";
 import { shortenAddress } from "@/lib/format/address";
+import { PAGE_CONTAINER } from "@/lib/ui/container";
 
 // Three columns: what the site is, where the program lives, and the network in use.
 export function Footer() {
@@ -7,7 +8,7 @@ export function Footer() {
 
   return (
     <footer className="border-t border-border bg-surface">
-      <div className="mx-auto grid w-full max-w-6xl gap-8 px-4 py-10 sm:grid-cols-3 sm:px-6">
+      <div className={`${PAGE_CONTAINER} grid gap-8 py-10 sm:grid-cols-3`}>
         <div className="flex flex-col gap-3">
           <p className="text-base font-semibold text-ink">Escrow Swap</p>
           <p className="text-sm leading-relaxed text-muted">

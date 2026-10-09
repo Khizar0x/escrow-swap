@@ -2,13 +2,14 @@ import { CreateOfferForm } from "@/components/CreateOfferForm";
 import { Footer } from "@/components/Footer";
 import { Header } from "@/components/Header";
 import { StatusStrip } from "@/components/StatusStrip";
+import { PAGE_CONTAINER } from "@/lib/ui/container";
 
 export default function CreateOfferPage() {
   return (
     <div className="flex min-h-screen flex-col bg-canvas text-ink">
       <Header />
       <StatusStrip />
-      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-16 sm:px-6">
+      <main className={`${PAGE_CONTAINER} flex flex-1 flex-col gap-6 py-16`}>
         <div className="flex flex-col gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">Create an offer</h1>
           <p className="text-sm text-muted">
