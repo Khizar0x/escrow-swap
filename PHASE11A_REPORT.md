@@ -48,17 +48,35 @@ Read `take_offer.rs` closely: it declares exactly **one** `token_program` accoun
 - A token owned by neither known program, and a token account too short to even be a token, are both rejected as "This address is not a token."
 - `associatedTokenAddress`/`createAssociatedTokenAccountIdempotentInstruction` are tested with both token programs, confirming they derive *different* addresses/instructions depending on which one is passed (the whole point of threading it through).
 
-## What still needs devnet verification
+## What still needed devnet verification (before hand-testing — see "Devnet verification" below for results)
 
-This was built and reasoned through, but the following haven't been exercised against a real cluster and should be checked by hand before relying on any of it:
+This was built and reasoned through, but had not yet been exercised against a real cluster:
 
-1. **The TLV extension-parsing byte layout** (the account-type tag at offset 82, the 4-byte type+length header per entry) was written from the spl-token-2022 account spec, not validated against bytes actually returned by `getAccountInfo` for a real Token-2022 mint. Recommend creating a few real devnet Token-2022 test tokens — one with no extensions, one with each blocked extension, one with an allowed/unblocked combination like the default-account-state extension set to *not* frozen — and confirming `resolveTokenProgram` reads each one the way this report says it should.
-2. **The currently-deployed devnet program may already structurally support Token-2022.** Checked `git show 0b7b810:programs/escrow/src/instructions/make_offer.rs` (the very first commit, still what's deployed per `IDL_CHECK_REPORT.md`): it already uses `token_interface::{Mint, TokenAccount, TokenInterface}`, the same generic types the hardened version uses — it was never classic-only at the account level, even before hardening. This means a plain Token-2022 offer (no extensions) might already work end to end against today's deployed program, without waiting for the hardening upgrade. Worth confirming directly: create a Token-2022 offer, have a second wallet take it, then separately cancel a different one.
-3. **The new freeze-authority rejection applies to classic tokens too.** If any token already used for hand-testing on devnet happens to have a freeze authority set, it will now be rejected where it wasn't before. Worth checking the test tokens already in use still pass.
-4. **The "both tokens must share a token program" guard** reflects a real constraint read from the Rust source, but hasn't been confirmed by actually attempting a mixed-program take and watching it fail the way the source implies it would.
+1. **The TLV extension-parsing byte layout** (the account-type tag, the 4-byte type+length header per entry) was written from the spl-token-2022 account spec, not validated against bytes actually returned by `getAccountInfo` for a real Token-2022 mint.
+2. **The currently-deployed devnet program may already structurally support Token-2022.** Checked `git show 0b7b810:programs/escrow/src/instructions/make_offer.rs` (the very first commit, still what's deployed per `IDL_CHECK_REPORT.md`): it already uses `token_interface::{Mint, TokenAccount, TokenInterface}`, the same generic types the hardened version uses — it was never classic-only at the account level, even before hardening. This meant a plain Token-2022 offer (no extensions) might already work end to end against today's deployed program, without waiting for the hardening upgrade.
+3. **The new freeze-authority rejection applies to classic tokens too.** If any token already used for hand-testing on devnet happens to have a freeze authority set, it would now be rejected where it wasn't before.
+4. **The "both tokens must share a token program" guard** reflects a real constraint read from the Rust source, but hadn't been confirmed against a real mixed-program attempt.
 
 PLAN.md's original Phase 11A entry notes its dependency as "the program upgrade with the hardening changes must be on devnet first." This part was built ahead of that, at explicit instruction — per point 2 above, the account-level Token-2022 support doesn't actually require the hardening upgrade, but the hardening commit's own Token-2022-specific check (`reject_transfer_fee_mint`) is a *program-side* backstop this frontend work doesn't depend on, since every one of the six blocked conditions above is enforced client-side regardless of which program version is live.
 
+## Devnet verification
+
+Hand-tested on devnet after the extension-parsing fix in `9902cd2`.
+
+**Tokens used:** two Token-2022 test tokens with no extensions (one at 6 decimals, one at 9), one Token-2022 token with a 1% transfer fee (`4hCSTsZWboKxb9LcYGDXfSmY7pxQmYHmCHmdTRqcXwYU`, the same token that exposed the bug below), and the existing classic test tokens.
+
+**Results:**
+- Create, take, and cancel all passed with a plain Token-2022 pair (no extensions) on the deployed, pre-hardening program — confirming point 2 above directly: no program upgrade is needed for Token-2022 support to work. Balances matched expectations on both wallets afterward.
+- A mixed pair (one classic token, one Token-2022 token) was blocked at Create Offer with "These two tokens can't be combined. Choose a different pair." — confirming the `assertSameTokenProgram` guard fires correctly on a real pair of tokens, not just in a mocked test.
+- The transfer-fee Token-2022 token was blocked with "This token takes a fee on every transfer. It isn't supported here." — confirming the fix.
+- Normal (non-extension) tokens, both classic and Token-2022, still worked after the fix — the fix didn't regress the plain case.
+
+**Bug found:** the extension parser looked for extensions starting at byte offset 83 (right after a mint's own 82 bytes), but Token-2022 actually pads every mint out to 165 bytes before placing the account-type tag, so the parser was reading padding and finding nothing — a transfer-fee token slipped through, opening the wallet pop-up instead of being blocked. Fixed in `9902cd2` by moving the start offset to 166. The original unit tests were built from the same wrong layout assumption as the code they were testing, so they passed anyway and gave false confidence. The lesson: a test built from the same assumption as the code it's testing cannot catch that assumption being wrong — only a real devnet test, using real on-chain bytes, actually caught this one.
+
+**Known small issue:** My Offers can briefly keep showing a canceled offer until Refresh is clicked.
+
+**Still not tested:** the other blocked extensions — permanent delegate, transfer hook, freeze authority, mint close authority, and default-account-state-frozen — are covered by unit tests only; none of them have been exercised against a real Token-2022 token on devnet yet.
+
 ## Verification
 
-`npm run typecheck`: clean. `npm run lint`: clean. `npm run test -- --run`: 193/193. `npm run build`: clean (`/`, `/create-offer`, `/my-offers` all generated). Committed as "Phase 11A part 1: Token-2022 support" only after all of the above passed.
+`npm run typecheck`: clean. `npm run lint`: clean. `npm run test -- --run`: 204/204 (as of `9902cd2`). `npm run build`: clean (`/`, `/create-offer`, `/my-offers` all generated). Committed as "Phase 11A part 1: Token-2022 support" only after all of the above passed, with a follow-up fix commit ("Fix transfer fee extension detection") once the devnet bug above was found and corrected.
