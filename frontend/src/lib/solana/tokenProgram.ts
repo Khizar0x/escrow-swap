@@ -9,9 +9,19 @@ export class TokenProgramError extends Error {}
 const MINT_BASE_LEN = 82;
 const MINT_DECIMALS_OFFSET = 44;
 const FREEZE_AUTHORITY_OPTION_OFFSET = 46;
-// One byte "account type" tag sits right after the base layout; the
-// extension list (if any) starts immediately after that tag.
-const EXTENSIONS_START_OFFSET = MINT_BASE_LEN + 1;
+
+// A Token-2022 mint WITH extensions does not start its account-type tag
+// right after the mint's own 82 bytes — it zero-pads out to Account::LEN
+// (165) first, then the tag, then the TLV entries. This is deliberate on
+// Token-2022's side (see spl-token-2022-interface's extension/mod.rs,
+// BASE_ACCOUNT_LENGTH): every extensible account, mint or token account,
+// starts its type-and-TLV region at the same fixed offset, so a mint's
+// extension data can never be mistaken for a token account's. Starting the
+// scan right after the mint's own 82 bytes instead of after this padding
+// silently finds nothing — reading padding zero bytes as an empty/absent
+// extension list instead of the real one.
+const EXTENSIBLE_ACCOUNT_LENGTH = 165; // Account::LEN
+const EXTENSIONS_START_OFFSET = EXTENSIBLE_ACCOUNT_LENGTH + 1;
 
 // Token-2022 extension type numbers this app recognizes by name. Anything
 // else present on the token is still blocked — see assertExtensionsAllowed
