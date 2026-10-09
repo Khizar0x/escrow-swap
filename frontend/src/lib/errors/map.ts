@@ -15,6 +15,10 @@ const PLAIN_MESSAGES: Record<string, string> = {
   SameMint: "Choose two different tokens.",
   TransferFeeNotSupported: "This token type is not supported yet.",
   TransferAmountMismatch: "The transfer did not complete as expected. Try again.",
+  PermanentDelegateNotSupported: "This token lets someone else move tokens out of your account. It's not supported.",
+  TransferHookNotSupported: "This token runs extra code on every transfer. It's not supported.",
+  DefaultFrozenNotSupported: "This token starts new accounts out frozen. It's not supported.",
+  FreezeAuthorityNotSupported: "This token can be frozen by its creator. It's not supported.",
 };
 
 export const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";

@@ -830,6 +830,26 @@
       "code": 6005,
       "name": "TransferAmountMismatch",
       "msg": "Token transfer moved a different amount than requested"
+    },
+    {
+      "code": 6006,
+      "name": "PermanentDelegateNotSupported",
+      "msg": "Mints with a permanent delegate are not supported"
+    },
+    {
+      "code": 6007,
+      "name": "TransferHookNotSupported",
+      "msg": "Mints with a transfer hook are not supported"
+    },
+    {
+      "code": 6008,
+      "name": "DefaultFrozenNotSupported",
+      "msg": "Mints that default new accounts to frozen are not supported"
+    },
+    {
+      "code": 6009,
+      "name": "FreezeAuthorityNotSupported",
+      "msg": "Mints with a freeze authority are not supported"
     }
   ],
   "types": [

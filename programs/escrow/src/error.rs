@@ -14,4 +14,12 @@ pub enum ErrorCode {
     TransferFeeNotSupported,
     #[msg("Token transfer moved a different amount than requested")]
     TransferAmountMismatch,
+    #[msg("Mints with a permanent delegate are not supported")]
+    PermanentDelegateNotSupported,
+    #[msg("Mints with a transfer hook are not supported")]
+    TransferHookNotSupported,
+    #[msg("Mints that default new accounts to frozen are not supported")]
+    DefaultFrozenNotSupported,
+    #[msg("Mints with a freeze authority are not supported")]
+    FreezeAuthorityNotSupported,
 }

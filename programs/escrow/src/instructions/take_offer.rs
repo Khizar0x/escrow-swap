@@ -7,7 +7,7 @@ use anchor_spl::{
     },
 };
 
-use crate::{constants::*, error::ErrorCode, state::Offer};
+use crate::{constants::*, error::ErrorCode, state::Offer, token_guard::assert_mint_is_supported};
 
 #[derive(Accounts)]
 pub struct TakeOffer<'info> {
@@ -74,6 +74,24 @@ pub struct TakeOffer<'info> {
 pub fn handle_take_offer(ctx: Context<TakeOffer>) -> Result<()> {
     let amount_a = ctx.accounts.offer.amount_a;
     let amount_b = ctx.accounts.offer.amount_b;
+
+    msg!(
+        "take_offer: offer={} taker={} maker={} mint_a={} mint_b={} amount_a={} amount_b={}",
+        ctx.accounts.offer.key(),
+        ctx.accounts.taker.key(),
+        ctx.accounts.maker.key(),
+        ctx.accounts.token_mint_a.key(),
+        ctx.accounts.token_mint_b.key(),
+        amount_a,
+        amount_b
+    );
+
+    // Re-checked here, not just at make_offer: defense in depth, so the
+    // vault/payout path never relies on a check made in a different
+    // instruction having been correct or still valid.
+    assert_mint_is_supported(&ctx.accounts.token_mint_a.to_account_info(), "A", "take_offer")?;
+    assert_mint_is_supported(&ctx.accounts.token_mint_b.to_account_info(), "B", "take_offer")?;
+
     // maker_token_account_b may already hold tokens, so compare the delta.
     let maker_b_before = ctx.accounts.maker_token_account_b.amount;
 
@@ -93,7 +111,14 @@ pub fn handle_take_offer(ctx: Context<TakeOffer>) -> Result<()> {
         .amount
         .checked_sub(maker_b_before)
         .ok_or(ErrorCode::TransferAmountMismatch)?;
-    require_eq!(received_b, amount_b, ErrorCode::TransferAmountMismatch);
+    if received_b != amount_b {
+        msg!(
+            "take_offer: rejected, maker received {} of mint B but expected {}",
+            received_b,
+            amount_b
+        );
+        return err!(ErrorCode::TransferAmountMismatch);
+    }
 
     let maker_key = ctx.accounts.maker.key();
     let offer_id_bytes = ctx.accounts.offer.offer_id.to_le_bytes();
@@ -128,7 +153,7 @@ pub fn handle_take_offer(ctx: Context<TakeOffer>) -> Result<()> {
     close_account(close_ctx)?;
 
     msg!(
-        "Offer {} taken: {} of mint A delivered to taker, {} of mint B paid to maker",
+        "take_offer: offer {} taken, {} of mint A delivered to taker, {} of mint B paid to maker",
         ctx.accounts.offer.offer_id,
         amount_a,
         amount_b

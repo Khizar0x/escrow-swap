@@ -18,11 +18,13 @@ use {
             self,
             spl_token_2022::{
                 extension::{
+                    default_account_state::instruction::initialize_default_account_state,
                     transfer_fee::instruction::initialize_transfer_fee_config,
+                    transfer_hook::instruction::initialize as initialize_transfer_hook,
                     ExtensionType, StateWithExtensions,
                 },
                 instruction as token_ix,
-                state::{Account as TokenAccount, Mint},
+                state::{Account as TokenAccount, AccountState, Mint},
             },
         },
     },
@@ -106,6 +108,80 @@ fn create_mint(env: &mut Env, token_program: Pubkey, transfer_fee_bps: Option<u1
         );
     }
     ixs.push(token_ix::initialize_mint2(&token_program, &mint.pubkey(), &payer, None, 6).unwrap());
+    send(env, &ixs, &[&mint]).unwrap();
+    mint.pubkey()
+}
+
+/// Creates a mint (classic or Token-2022, by `token_program`) with a freeze
+/// authority set. Freeze authority is a base Mint field, not a Token-2022
+/// extension, so this works for either token program.
+fn create_mint_with_freeze_authority(env: &mut Env, token_program: Pubkey) -> Pubkey {
+    let mint = Keypair::new();
+    let payer = env.payer.pubkey();
+    let space = Mint::LEN;
+    let rent = env.svm.minimum_balance_for_rent_exemption(space);
+    let ixs = vec![
+        system_instruction::create_account(&payer, &mint.pubkey(), rent, space as u64, &token_program),
+        token_ix::initialize_mint2(&token_program, &mint.pubkey(), &payer, Some(&payer), 6).unwrap(),
+    ];
+    send(env, &ixs, &[&mint]).unwrap();
+    mint.pubkey()
+}
+
+/// Creates a Token-2022 mint carrying a PermanentDelegate extension.
+fn create_mint_with_permanent_delegate(env: &mut Env) -> Pubkey {
+    let mint = Keypair::new();
+    let payer = env.payer.pubkey();
+    let space =
+        ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::PermanentDelegate])
+            .unwrap();
+    let rent = env.svm.minimum_balance_for_rent_exemption(space);
+    let ixs = vec![
+        system_instruction::create_account(&payer, &mint.pubkey(), rent, space as u64, &token_2022::ID),
+        token_ix::initialize_permanent_delegate(&token_2022::ID, &mint.pubkey(), &payer).unwrap(),
+        token_ix::initialize_mint2(&token_2022::ID, &mint.pubkey(), &payer, None, 6).unwrap(),
+    ];
+    send(env, &ixs, &[&mint]).unwrap();
+    mint.pubkey()
+}
+
+/// Creates a Token-2022 mint carrying a TransferHook extension.
+fn create_mint_with_transfer_hook(env: &mut Env) -> Pubkey {
+    let mint = Keypair::new();
+    let payer = env.payer.pubkey();
+    let space = ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::TransferHook])
+        .unwrap();
+    let rent = env.svm.minimum_balance_for_rent_exemption(space);
+    let ixs = vec![
+        system_instruction::create_account(&payer, &mint.pubkey(), rent, space as u64, &token_2022::ID),
+        initialize_transfer_hook(&token_2022::ID, &mint.pubkey(), Some(payer), Some(escrow::id()))
+            .unwrap(),
+        token_ix::initialize_mint2(&token_2022::ID, &mint.pubkey(), &payer, None, 6).unwrap(),
+    ];
+    send(env, &ixs, &[&mint]).unwrap();
+    mint.pubkey()
+}
+
+/// Creates a Token-2022 mint whose DefaultAccountState extension is set to
+/// Frozen, so every new account of this mint is born frozen. Token-2022
+/// requires a mint using this extension to also have a freeze authority
+/// (something has to be able to thaw a default-frozen account), so this
+/// mint also carries one — which is exactly why `assert_mint_is_supported`
+/// checks DefaultAccountState before the generic freeze-authority check.
+fn create_mint_with_default_frozen(env: &mut Env) -> Pubkey {
+    let mint = Keypair::new();
+    let payer = env.payer.pubkey();
+    let space =
+        ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::DefaultAccountState])
+            .unwrap();
+    let rent = env.svm.minimum_balance_for_rent_exemption(space);
+    let ixs = vec![
+        system_instruction::create_account(&payer, &mint.pubkey(), rent, space as u64, &token_2022::ID),
+        initialize_default_account_state(&token_2022::ID, &mint.pubkey(), &AccountState::Frozen)
+            .unwrap(),
+        token_ix::initialize_mint2(&token_2022::ID, &mint.pubkey(), &payer, Some(&payer), 6)
+            .unwrap(),
+    ];
     send(env, &ixs, &[&mint]).unwrap();
     mint.pubkey()
 }
@@ -261,4 +337,111 @@ fn make_offer_rejects_transfer_fee_mint_a() {
         .map(|_| token_amount(&env, vault));
     assert_custom_error(res, 6004);
     assert!(vault_amount.is_none(), "no vault should exist");
+}
+
+#[test]
+fn control_make_offer_succeeds_with_plain_token_2022_mints() {
+    // A plain Token-2022 mint (no extensions at all) must still work,
+    // otherwise the rejection tests below could pass for the wrong reason.
+    let mut env = new_env();
+    let mint_a = create_mint(&mut env, token_2022::ID, None);
+    let mint_b = create_mint(&mut env, token_2022::ID, None);
+    let maker = env.payer.pubkey();
+    let maker_ata = create_ata(&mut env, maker, mint_a, token_2022::ID);
+    mint_to(&mut env, token_2022::ID, mint_a, maker_ata, 1_000);
+
+    let (ix, _offer, vault) = make_offer_ix(&env, mint_a, mint_b, token_2022::ID, 1, 100, 50);
+    send(&mut env, &[ix], &[]).expect("valid Token-2022 offer should succeed");
+    assert_eq!(token_amount(&env, vault), 100);
+}
+
+#[test]
+fn make_offer_rejects_permanent_delegate_mint_a() {
+    let mut env = new_env();
+    let mint_a = create_mint_with_permanent_delegate(&mut env);
+    let mint_b = create_mint(&mut env, token_2022::ID, None);
+    let maker = env.payer.pubkey();
+    let maker_ata = create_ata(&mut env, maker, mint_a, token_2022::ID);
+    mint_to(&mut env, token_2022::ID, mint_a, maker_ata, 1_000);
+
+    let (ix, _offer, vault) = make_offer_ix(&env, mint_a, mint_b, token_2022::ID, 1, 1_000, 500);
+    let res = send(&mut env, &[ix], &[]);
+    assert_custom_error(res, 6006);
+    assert!(env.svm.get_account(&vault).is_none(), "no vault should exist");
+}
+
+#[test]
+fn make_offer_rejects_permanent_delegate_mint_b() {
+    let mut env = new_env();
+    let mint_a = create_mint(&mut env, token_2022::ID, None);
+    let mint_b = create_mint_with_permanent_delegate(&mut env);
+    let maker = env.payer.pubkey();
+    let maker_ata = create_ata(&mut env, maker, mint_a, token_2022::ID);
+    mint_to(&mut env, token_2022::ID, mint_a, maker_ata, 1_000);
+
+    let (ix, offer, _vault) = make_offer_ix(&env, mint_a, mint_b, token_2022::ID, 1, 1_000, 500);
+    let res = send(&mut env, &[ix], &[]);
+    assert_custom_error(res, 6006);
+    assert!(env.svm.get_account(&offer).is_none(), "no offer should exist");
+}
+
+#[test]
+fn make_offer_rejects_transfer_hook_mint_a() {
+    let mut env = new_env();
+    let mint_a = create_mint_with_transfer_hook(&mut env);
+    let mint_b = create_mint(&mut env, token_2022::ID, None);
+    let maker = env.payer.pubkey();
+    let maker_ata = create_ata(&mut env, maker, mint_a, token_2022::ID);
+    mint_to(&mut env, token_2022::ID, mint_a, maker_ata, 1_000);
+
+    let (ix, _offer, vault) = make_offer_ix(&env, mint_a, mint_b, token_2022::ID, 1, 1_000, 500);
+    let res = send(&mut env, &[ix], &[]);
+    assert_custom_error(res, 6007);
+    assert!(env.svm.get_account(&vault).is_none(), "no vault should exist");
+}
+
+#[test]
+fn make_offer_rejects_default_frozen_mint_a() {
+    let mut env = new_env();
+    let mint_a = create_mint_with_default_frozen(&mut env);
+    let mint_b = create_mint(&mut env, token_2022::ID, None);
+    let maker = env.payer.pubkey();
+    // Created frozen by the mint's own default; never funded, since minting
+    // into a frozen account would itself fail before make_offer runs.
+    create_ata(&mut env, maker, mint_a, token_2022::ID);
+
+    let (ix, _offer, vault) = make_offer_ix(&env, mint_a, mint_b, token_2022::ID, 1, 1_000, 500);
+    let res = send(&mut env, &[ix], &[]);
+    assert_custom_error(res, 6008);
+    assert!(env.svm.get_account(&vault).is_none(), "no vault should exist");
+}
+
+#[test]
+fn make_offer_rejects_freeze_authority_mint_a_classic() {
+    let mut env = new_env();
+    let mint_a = create_mint_with_freeze_authority(&mut env, token::ID);
+    let mint_b = create_mint(&mut env, token::ID, None);
+    let maker = env.payer.pubkey();
+    let maker_ata = create_ata(&mut env, maker, mint_a, token::ID);
+    mint_to(&mut env, token::ID, mint_a, maker_ata, 1_000);
+
+    let (ix, _offer, vault) = make_offer_ix(&env, mint_a, mint_b, token::ID, 1, 1_000, 500);
+    let res = send(&mut env, &[ix], &[]);
+    assert_custom_error(res, 6009);
+    assert!(env.svm.get_account(&vault).is_none(), "no vault should exist");
+}
+
+#[test]
+fn make_offer_rejects_freeze_authority_mint_a_token_2022() {
+    let mut env = new_env();
+    let mint_a = create_mint_with_freeze_authority(&mut env, token_2022::ID);
+    let mint_b = create_mint(&mut env, token_2022::ID, None);
+    let maker = env.payer.pubkey();
+    let maker_ata = create_ata(&mut env, maker, mint_a, token_2022::ID);
+    mint_to(&mut env, token_2022::ID, mint_a, maker_ata, 1_000);
+
+    let (ix, _offer, vault) = make_offer_ix(&env, mint_a, mint_b, token_2022::ID, 1, 1_000, 500);
+    let res = send(&mut env, &[ix], &[]);
+    assert_custom_error(res, 6009);
+    assert!(env.svm.get_account(&vault).is_none(), "no vault should exist");
 }

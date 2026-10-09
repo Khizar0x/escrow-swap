@@ -1,28 +1,10 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_2022::spl_token_2022::{
-        extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
-        state::Mint as SplMint,
-    },
     token_interface::{transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
-use crate::{constants::*, error::ErrorCode, state::Offer};
-
-/// Rejects a mint that carries a TransferFeeConfig extension. Such a mint
-/// withholds part of every transfer, so the vault would hold less than the
-/// offered amount. Classic SPL mints have no extensions and pass.
-fn reject_transfer_fee_mint(mint: &AccountInfo) -> Result<()> {
-    let data = mint.try_borrow_data()?;
-    if let Ok(state) = StateWithExtensions::<SplMint>::unpack(&data) {
-        require!(
-            state.get_extension::<TransferFeeConfig>().is_err(),
-            ErrorCode::TransferFeeNotSupported
-        );
-    }
-    Ok(())
-}
+use crate::{constants::*, error::ErrorCode, state::Offer, token_guard::assert_mint_is_supported};
 
 #[derive(Accounts)]
 #[instruction(offer_id: u64)]
@@ -72,10 +54,26 @@ pub fn handle_make_offer(
     amount_a: u64,
     amount_b: u64,
 ) -> Result<()> {
-    require!(amount_a > 0, ErrorCode::ZeroAmount);
-    require!(amount_b > 0, ErrorCode::ZeroAmount);
-    reject_transfer_fee_mint(&ctx.accounts.token_mint_a.to_account_info())?;
-    reject_transfer_fee_mint(&ctx.accounts.token_mint_b.to_account_info())?;
+    msg!(
+        "make_offer: offer_id={} maker={} mint_a={} mint_b={} amount_a={} amount_b={}",
+        offer_id,
+        ctx.accounts.maker.key(),
+        ctx.accounts.token_mint_a.key(),
+        ctx.accounts.token_mint_b.key(),
+        amount_a,
+        amount_b
+    );
+
+    if amount_a == 0 {
+        msg!("make_offer: rejected, amount_a is zero");
+        return err!(ErrorCode::ZeroAmount);
+    }
+    if amount_b == 0 {
+        msg!("make_offer: rejected, amount_b is zero");
+        return err!(ErrorCode::ZeroAmount);
+    }
+    assert_mint_is_supported(&ctx.accounts.token_mint_a.to_account_info(), "A", "make_offer")?;
+    assert_mint_is_supported(&ctx.accounts.token_mint_b.to_account_info(), "B", "make_offer")?;
 
     ctx.accounts.offer.set_inner(Offer {
         offer_id,
@@ -98,14 +96,17 @@ pub fn handle_make_offer(
 
     // The vault was created empty above, so it must now hold exactly amount_a.
     ctx.accounts.vault.reload()?;
-    require_eq!(
-        ctx.accounts.vault.amount,
-        amount_a,
-        ErrorCode::TransferAmountMismatch
-    );
+    if ctx.accounts.vault.amount != amount_a {
+        msg!(
+            "make_offer: rejected, vault holds {} but expected {}",
+            ctx.accounts.vault.amount,
+            amount_a
+        );
+        return err!(ErrorCode::TransferAmountMismatch);
+    }
 
     msg!(
-        "Offer {} created: locked {} of mint A for {} of mint B",
+        "make_offer: offer {} created, locked {} of mint A for {} of mint B",
         offer_id,
         amount_a,
         amount_b

@@ -21,7 +21,7 @@ function fakeAnchorError(name: string, code: number) {
 }
 
 describe("toPlainErrorMessage", () => {
-  it("maps every documented program error (6000-6005) to its own plain message", () => {
+  it("maps every documented program error (6000-6009) to its own plain message", () => {
     for (const entry of escrowIdl.errors) {
       const message = toPlainErrorMessage(fakeAnchorError(entry.name, entry.code));
       expect(message).not.toBe(GENERIC_ERROR_MESSAGE);
